@@ -1,0 +1,16 @@
+.git/
+.github/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+.env*
+infra/.terraform/
+*.md

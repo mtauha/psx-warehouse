@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run ruff
+        run: ruff check extract/
+      - name: Run mypy
+        run: mypy extract/
+
+  dbt-validate:
+    name: dbt-validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install dbt
+        run: pip install dbt-core dbt-bigquery
+      - name: Write stub profiles.yml
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml <<'EOF'
+          psx_warehouse:
+            target: dev
+            outputs:
+              dev:
+                type: bigquery
+                method: oauth
+                project: dummy-project
+                dataset: dummy_dataset
+                threads: 1
+          EOF
+      - name: dbt parse
+        working-directory: dbt
+        run: dbt parse

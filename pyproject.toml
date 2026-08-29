@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psx-warehouse"
+version = "0.1.0"
+description = "dbt-core + BigQuery analytics warehouse for Pakistan Stock Exchange (PSX) data"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mtauha/psx-warehouse"
+Source = "https://github.com/mtauha/psx-warehouse"
+"Bug Tracker" = "https://github.com/mtauha/psx-warehouse/issues"
+Changelog = "https://github.com/mtauha/psx-warehouse/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["extract*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

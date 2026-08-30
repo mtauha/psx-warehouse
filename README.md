@@ -14,3 +14,5 @@ code, dbt models, or infrastructure yet.
 - `extract/` — Python extraction from the `psxdata` SDK into BigQuery raw
 - `dbt/` — dbt-core project (staging / intermediate / marts)
 - `infra/` — Terraform
+
+<!-- CI verification: phase 1 scaffolding -->

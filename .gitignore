@@ -20,3 +20,9 @@ dbt/logs/
 infra/.terraform/
 infra/*.tfstate
 infra/*.tfstate.backup
+
+# Secrets
+.env*
+profiles.yml
+credentials*.json
+*-key.json

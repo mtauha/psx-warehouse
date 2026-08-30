@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "dbt-core + BigQuery analytics warehouse for Pakistan Stock Exchange (PSX) data"
 readme = "README.md"
 requires-python = ">=3.11"
+license = {file = "LICENSE.md"}
 
 [project.optional-dependencies]
 dev = [

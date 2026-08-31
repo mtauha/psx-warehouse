@@ -28,4 +28,4 @@ ENV PYTHONPATH=/app
 
 USER psxuser
 
-CMD ["python", "-c", "print('psx-warehouse image placeholder — extraction entrypoint not yet implemented')"]
+CMD ["python", "-m", "extract.main"]

@@ -9,11 +9,19 @@ description = "dbt-core + BigQuery analytics warehouse for Pakistan Stock Exchan
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE.md"}
+dependencies = [
+    "psxdata>=1.0.0",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "google-cloud-bigquery>=3.11",
+]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.4",
     "mypy>=1.0",
+    "pytest>=7",
+    "pytest-cov>=4",
 ]
 
 [project.urls]
@@ -37,3 +45,6 @@ select = ["E", "F", "W", "I"]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

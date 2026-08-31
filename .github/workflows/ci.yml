@@ -16,15 +16,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version: "3.11"
+          enable-cache: true
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: uv sync --locked --all-extras --dev
       - name: Run ruff
-        run: ruff check extract/
+        run: uv run ruff check extract/
       - name: Run mypy
-        run: mypy extract/
+        run: uv run mypy extract/
 
   test:
     name: test
@@ -33,13 +33,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version: "3.11"
+          enable-cache: true
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: uv sync --locked --all-extras --dev
       - name: Run pytest
-        run: pytest tests/ -v
+        run: uv run pytest tests/ -v
 
   dbt-validate:
     name: dbt-validate
@@ -51,8 +51,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
       - name: Install dbt
-        run: pip install dbt-core dbt-bigquery
+        run: uv pip install --system dbt-core dbt-bigquery
       - name: Write stub profiles.yml
         run: |
           mkdir -p ~/.dbt

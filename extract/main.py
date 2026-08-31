@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import psxdata
@@ -36,6 +36,7 @@ def run(cfg: config.Config) -> None:
             not caught here — they propagate as uncaught exceptions,
             which is the intended fail-loud behavior.
     """
+    run_started_at = datetime.now(timezone.utc)
     client = bigquery_io.get_client(cfg.gcp_project)
     bigquery_io.ensure_dataset(client, cfg.gcp_project, cfg.bq_dataset, cfg.bq_location)
 
@@ -77,7 +78,12 @@ def run(cfg: config.Config) -> None:
         history_df = history_df.copy()
         history_df["symbol"] = symbol
 
-        hashed_df = add_row_hashes(history_df)
+        try:
+            hashed_df = add_row_hashes(history_df)
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.warning("Skipping %s: malformed row data (%s)", symbol, exc)
+            continue
+
         existing = bigquery_io.fetch_latest_hashes(
             client, cfg.gcp_project, cfg.bq_dataset, symbol
         )
@@ -96,7 +102,7 @@ def run(cfg: config.Config) -> None:
             client, cfg.gcp_project, cfg.bq_dataset, all_rows_to_insert
         )
         bigquery_io.supersede_stock_history_keys(
-            client, cfg.gcp_project, cfg.bq_dataset, all_superseded_keys
+            client, cfg.gcp_project, cfg.bq_dataset, all_superseded_keys, run_started_at
         )
         logger.info("Extraction complete: %d rows written", len(all_rows_to_insert))
     else:

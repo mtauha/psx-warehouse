@@ -133,6 +133,63 @@ def test_run_writes_nothing_when_no_changes_detected(
     mock_bq.supersede_stock_history_keys.assert_not_called()
 
 
+@patch("extract.main.bigquery_io")
+@patch("extract.main.psxdata")
+def test_run_writes_changed_row_and_supersedes_its_key(
+    mock_psxdata: MagicMock, mock_bq: MagicMock
+) -> None:
+    """Regression guard for Finding 1: a CHANGED (not new) row must be both
+    inserted (load_stock_history_rows) and superseded (supersede_stock_
+    history_keys with that key present) — the exact path where the old fix
+    superseded the just-inserted row instead of only the prior one."""
+    mock_psxdata.indices.return_value = pd.DataFrame({"symbol": ["ENGRO"], "idx_weight": [5.0]})
+    fresh = _history_df(101.0)
+    mock_psxdata.stocks.return_value = fresh
+    mock_bq.fetch_latest_hashes.return_value = {
+        ("ENGRO", "2024-01-05"): "stale-hash-that-does-not-match"
+    }
+
+    run(_cfg())
+
+    mock_bq.load_stock_history_rows.assert_called_once()
+    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    assert len(written_df) == 1
+    assert written_df["symbol"].iloc[0] == "ENGRO"
+
+    mock_bq.supersede_stock_history_keys.assert_called_once()
+    call_args = mock_bq.supersede_stock_history_keys.call_args[0]
+    superseded_keys = call_args[3]
+    assert ("ENGRO", "2024-01-05") in superseded_keys
+    run_started_at = call_args[4]
+    assert run_started_at is not None
+
+
+@patch("extract.main.bigquery_io")
+@patch("extract.main.psxdata")
+def test_run_skips_ticker_with_malformed_row_and_continues(
+    mock_psxdata: MagicMock, mock_bq: MagicMock
+) -> None:
+    """Finding 3: a malformed OHLCV row (None open price) raises TypeError
+    inside compute_row_hash, which is not a PSXDataError. The run must not
+    abort — it should skip that ticker and still write the other valid
+    ticker's data."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    malformed_df = pd.DataFrame({
+        "date": [pd.Timestamp("2024-01-05")],
+        "open": [None], "high": [105.0], "low": [99.0], "close": [101.0],
+        "volume": [1000], "is_anomaly": [False],
+    })
+    mock_psxdata.stocks.side_effect = [malformed_df, _history_df(102.0)]
+    mock_bq.fetch_latest_hashes.return_value = {}
+
+    run(_cfg())
+
+    mock_bq.load_stock_history_rows.assert_called_once()
+    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    assert len(written_df) == 1
+    assert written_df["symbol"].iloc[0] == "LUCK"
+
+
 @patch("extract.main.config.load_config", side_effect=config.ConfigError("GCP_PROJECT missing"))
 def test_main_returns_1_on_config_error(mock_load_config: MagicMock) -> None:
     assert main() == 1

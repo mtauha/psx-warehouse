@@ -2,7 +2,7 @@
 no live GCP access."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -91,22 +91,34 @@ def test_load_stock_history_rows_adds_required_columns_and_loads() -> None:
 
 def test_supersede_stock_history_keys_noop_on_empty_list() -> None:
     client = MagicMock()
+    run_started_at = datetime(2024, 1, 5, 12, 0, 0, tzinfo=timezone.utc)
 
-    supersede_stock_history_keys(client, "proj", "raw", [])
+    supersede_stock_history_keys(client, "proj", "raw", [], run_started_at)
 
     client.query.assert_not_called()
 
 
 def test_supersede_stock_history_keys_builds_composite_key_update() -> None:
     client = MagicMock()
+    run_started_at = datetime(2024, 1, 5, 12, 0, 0, tzinfo=timezone.utc)
 
-    supersede_stock_history_keys(client, "proj", "raw", [("ENGRO", "2024-01-04")])
+    supersede_stock_history_keys(
+        client, "proj", "raw", [("ENGRO", "2024-01-04")], run_started_at
+    )
 
     query_arg = client.query.call_args[0][0]
     assert "SET is_latest = FALSE" in query_arg
     assert "raw.stock_history" in query_arg
+    assert "is_latest = TRUE" in query_arg
+    assert "loaded_at < @run_started_at" in query_arg
+
     job_config = client.query.call_args[1]["job_config"]
-    assert job_config.query_parameters[0].values == ["ENGRO|2024-01-04"]
+    params_by_name = {p.name: p for p in job_config.query_parameters}
+    assert params_by_name["keys"].values == ["ENGRO|2024-01-04"]
+    assert params_by_name["keys"].array_type == "STRING"
+    assert params_by_name["run_started_at"].value == run_started_at
+    assert params_by_name["run_started_at"].type_ == "TIMESTAMP"
+
     client.query.return_value.result.assert_called_once()
 
 

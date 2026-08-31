@@ -126,7 +126,11 @@ def load_stock_history_rows(
 
 
 def supersede_stock_history_keys(
-    client: bigquery.Client, project: str, dataset: str, keys: list[tuple[str, str]]
+    client: bigquery.Client,
+    project: str,
+    dataset: str,
+    keys: list[tuple[str, str]],
+    run_started_at: datetime,
 ) -> None:
     """Flip is_latest=FALSE and set superseded_at for the given keys.
 
@@ -134,6 +138,19 @@ def supersede_stock_history_keys(
     diff.diff_against_latest. Matched via a composite "SYMBOL|YYYY-MM-DD"
     string parameter — simpler and equally safe/parameterized compared to
     an array-of-structs query parameter.
+
+    run_started_at must be captured (UTC) before this run's ticker loop
+    started, and is required so the WHERE clause can exclude the
+    just-inserted replacement row for a changed key. main.py's flush order
+    calls load_stock_history_rows() (which inserts the new row with
+    is_latest=True, loaded_at=now()) BEFORE this function runs. Without the
+    loaded_at < @run_started_at guard, the new row's is_latest=True and
+    composite key both match this UPDATE's predicate, so it would flip both
+    the old row AND the just-inserted row to is_latest=FALSE, leaving zero
+    is_latest=TRUE rows for that key. Since the new row is always written
+    during this same run (loaded_at >= run_started_at), the guard excludes
+    it while still correctly superseding any pre-existing row from a prior
+    run (loaded_at < run_started_at).
     """
     if not keys:
         return
@@ -144,9 +161,13 @@ def supersede_stock_history_keys(
         SET is_latest = FALSE, superseded_at = CURRENT_TIMESTAMP()
         WHERE is_latest = TRUE
           AND CONCAT(symbol, '|', CAST(date AS STRING)) IN UNNEST(@keys)
+          AND loaded_at < @run_started_at
     """
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ArrayQueryParameter("keys", "STRING", composite_keys)]
+        query_parameters=[
+            bigquery.ArrayQueryParameter("keys", "STRING", composite_keys),
+            bigquery.ScalarQueryParameter("run_started_at", "TIMESTAMP", run_started_at),
+        ]
     )
     client.query(query, job_config=job_config).result()
 

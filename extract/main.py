@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import date, datetime, timezone
+from typing import Any
 
 import pandas as pd
 import psxdata
@@ -18,6 +19,7 @@ from psxdata.exceptions import PSXDataError
 
 from extract import bigquery_io, config
 from extract.diff import add_row_hashes, diff_against_latest
+from extract.storage import RawStorage
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +28,31 @@ class ExtractionFailed(Exception):
     """Raised for conditions that should exit the job non-zero."""
 
 
-def run(cfg: config.Config) -> None:
+def _get_storage(backend: str) -> RawStorage:
+    """Resolve a backend name to its storage module.
+
+    Deliberately the only place in extract/ that knows which backend names
+    exist — config.py stays backend-agnostic so adding a backend never
+    requires editing it.
+    """
+    if backend == "bigquery":
+        return bigquery_io
+    raise ExtractionFailed(f"Unsupported BACKEND: {backend!r}")
+
+
+def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
     """Execute one extraction run against the given configuration.
 
     Raises:
         ExtractionFailed: If a configured index's constituents can't be
             fetched or come back empty, or if zero OHLCV rows are fetched
-            across every ticker in the run. BigQuery write failures are
-            not caught here — they propagate as uncaught exceptions,
-            which is the intended fail-loud behavior.
+            across every ticker in the run. Storage write failures are not
+            caught here — they propagate as uncaught exceptions, which is
+            the intended fail-loud behavior.
     """
     run_started_at = datetime.now(timezone.utc)
-    bq_cfg = bigquery_io.load_config()
-    client = bigquery_io.get_client(bq_cfg)
-    bigquery_io.ensure_dataset(client, bq_cfg)
+    client = storage.get_client(backend_cfg)
+    storage.ensure_dataset(client, backend_cfg)
 
     today = date.today()
     all_symbols: set[str] = set()
@@ -55,8 +68,8 @@ def run(cfg: config.Config) -> None:
         if constituents_df.empty:
             raise ExtractionFailed(f"Index {index_name} returned no constituents")
 
-        bigquery_io.load_index_constituents(
-            client, bq_cfg, constituents_df, index_name, today
+        storage.load_index_constituents(
+            client, backend_cfg, constituents_df, index_name, today
         )
         all_symbols.update(constituents_df["symbol"].tolist())
 
@@ -85,7 +98,7 @@ def run(cfg: config.Config) -> None:
             logger.warning("Skipping %s: malformed row data (%s)", symbol, exc)
             continue
 
-        existing = bigquery_io.fetch_latest_hashes(client, bq_cfg, symbol)
+        existing = storage.fetch_latest_hashes(client, backend_cfg, symbol)
         rows_to_insert, superseded_keys = diff_against_latest(hashed_df, existing)
 
         if not rows_to_insert.empty:
@@ -97,9 +110,9 @@ def run(cfg: config.Config) -> None:
 
     if rows_to_insert_parts:
         all_rows_to_insert = pd.concat(rows_to_insert_parts, ignore_index=True)
-        bigquery_io.load_stock_history_rows(client, bq_cfg, all_rows_to_insert)
-        bigquery_io.supersede_stock_history_keys(
-            client, bq_cfg, all_superseded_keys, run_started_at
+        storage.load_stock_history_rows(client, backend_cfg, all_rows_to_insert)
+        storage.supersede_stock_history_keys(
+            client, backend_cfg, all_superseded_keys, run_started_at
         )
         logger.info("Extraction complete: %d rows written", len(all_rows_to_insert))
     else:
@@ -113,7 +126,12 @@ def main() -> int:
     )
     try:
         cfg = config.load_config()
-        run(cfg)
+        storage = _get_storage(cfg.backend)
+        # load_config() is deliberately not part of RawStorage (extract/storage.py):
+        # each backend owns its own concrete config type, so the shared
+        # Protocol can't declare a single return type for it.
+        backend_cfg = storage.load_config()  # type: ignore[attr-defined]
+        run(cfg, storage, backend_cfg)
     except (config.ConfigError, ExtractionFailed) as exc:
         logger.error(str(exc))
         return 1

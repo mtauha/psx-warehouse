@@ -45,6 +45,11 @@ INDEX_CONSTITUENTS_SCHEMA = [
 ]
 
 
+def _generate_table_id(project: str, dataset: str, table: str) -> str:
+    """Helper function to create table id on the go"""
+    return f"{project}.{dataset}.{table}"
+
+
 def get_client(project: str) -> bigquery.Client:
     """Create a BigQuery client using Application Default Credentials."""
     return bigquery.Client(project=project)
@@ -71,7 +76,7 @@ def fetch_latest_hashes(
         Empty dict if raw.stock_history doesn't exist yet (first-ever run)
         or the symbol has no rows yet.
     """
-    table_id = f"{project}.{dataset}.{STOCK_HISTORY_TABLE}"
+    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
     query = f"""
         SELECT symbol, date, row_hash
         FROM `{table_id}`
@@ -103,7 +108,7 @@ def load_stock_history_rows(
     """
     if rows_df.empty:
         return
-    table_id = f"{project}.{dataset}.{STOCK_HISTORY_TABLE}"
+    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = rows_df.copy()
@@ -154,7 +159,7 @@ def supersede_stock_history_keys(
     """
     if not keys:
         return
-    table_id = f"{project}.{dataset}.{STOCK_HISTORY_TABLE}"
+    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
     composite_keys = [f"{symbol}|{date_str}" for symbol, date_str in keys]
     query = f"""
         UPDATE `{table_id}`
@@ -188,7 +193,7 @@ def load_index_constituents(
     """
     if df.empty:
         return
-    table_id = f"{project}.{dataset}.{INDEX_CONSTITUENTS_TABLE}"
+    table_id = _generate_table_id(project, dataset, INDEX_CONSTITUENTS_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = df.copy()

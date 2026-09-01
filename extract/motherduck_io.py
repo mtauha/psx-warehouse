@@ -149,3 +149,38 @@ def load_stock_history_rows(
         )
     finally:
         client.unregister("stock_history_payload")
+
+
+def supersede_stock_history_keys(
+    client: duckdb.DuckDBPyConnection,
+    cfg: MotherDuckConfig,
+    keys: list[tuple[str, str]],
+    run_started_at: datetime,
+) -> None:
+    """Flip is_latest=FALSE and set superseded_at for the given keys.
+
+    keys are (symbol, "YYYY-MM-DD") tuples, as returned by
+    diff.diff_against_latest. run_started_at must be captured (UTC) before
+    this run's ticker loop started. Without the loaded_at < ? guard, a
+    changed key's just-inserted replacement row (loaded_at >= run_started_at)
+    would also match is_latest=TRUE for the same key and get flipped
+    alongside the genuinely-prior row — the exact Critical bug the
+    BigQuery write path had until the 2026-08-31 review caught it. The
+    guard excludes it by construction: the replacement is always written
+    during this same run (loaded_at >= run_started_at), while any
+    pre-existing row from a prior run has loaded_at < run_started_at.
+    """
+    if not keys:
+        return
+    composite_keys = [f"{symbol}|{date_str}" for symbol, date_str in keys]
+    placeholders = ", ".join(["?"] * len(composite_keys))
+    client.execute(
+        f"""
+        UPDATE {STOCK_HISTORY_TABLE}
+        SET is_latest = FALSE, superseded_at = CURRENT_TIMESTAMP
+        WHERE is_latest = TRUE
+          AND (symbol || '|' || CAST(date AS VARCHAR)) IN ({placeholders})
+          AND loaded_at < ?
+        """,
+        [*composite_keys, run_started_at],
+    )

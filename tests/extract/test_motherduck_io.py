@@ -5,7 +5,7 @@ MotherDuck. get_client() itself is tested separately with duckdb.connect
 mocked, since it's the one function that actually needs a real md: URL."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +21,7 @@ from extract.motherduck_io import (
     get_client,
     load_config,
     load_stock_history_rows,
+    supersede_stock_history_keys,
 )
 
 
@@ -167,3 +168,70 @@ def test_load_stock_history_rows_inserts_with_required_columns(tmp_path: Path) -
     assert row[2] is True
     assert row[3] is None
     assert isinstance(row[4], str) and len(row[4]) > 0
+
+
+def test_supersede_stock_history_keys_noop_on_empty_list(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    supersede_stock_history_keys(conn, _cfg(), [], datetime.now(timezone.utc))
+
+    count = conn.execute(f"SELECT COUNT(*) FROM {STOCK_HISTORY_TABLE}").fetchone()[0]
+    assert count == 0
+
+
+def test_supersede_stock_history_keys_flips_prior_row(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    run_started_at = datetime.now(timezone.utc)
+    conn.execute(
+        "INSERT INTO stock_history VALUES "
+        "('old-id', 'ENGRO', '2024-01-05', 1.0, 1.0, 1.0, 1.0, 1, FALSE, "
+        "'stale-hash', TRUE, ?, NULL)",
+        [run_started_at - timedelta(hours=1)],
+    )
+
+    supersede_stock_history_keys(conn, _cfg(), [("ENGRO", "2024-01-05")], run_started_at)
+
+    row = conn.execute(
+        f"SELECT is_latest, superseded_at FROM {STOCK_HISTORY_TABLE} WHERE history_id = 'old-id'"
+    ).fetchone()
+    assert row[0] is False
+    assert row[1] is not None
+
+
+def test_supersede_stock_history_keys_excludes_just_inserted_row(tmp_path: Path) -> None:
+    """Regression guard mirroring the BigQuery Critical bug fix: inserting a
+    changed row THEN superseding its key must flip only the prior row, not
+    the just-inserted replacement — both share (symbol, date) and
+    is_latest=TRUE at the moment supersede runs."""
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    run_started_at = datetime.now(timezone.utc)
+    # Prior run's row — loaded before this run started.
+    conn.execute(
+        "INSERT INTO stock_history VALUES "
+        "('old-id', 'ENGRO', '2024-01-05', 1.0, 1.0, 1.0, 1.0, 1, FALSE, "
+        "'stale-hash', TRUE, ?, NULL)",
+        [run_started_at - timedelta(hours=1)],
+    )
+    # This run's replacement row for the same key — loaded_at >= run_started_at.
+    rows_df = pd.DataFrame({
+        "symbol": ["ENGRO"], "date": [pd.Timestamp("2024-01-05")],
+        "open": [2.0], "high": [2.0], "low": [2.0], "close": [2.0],
+        "volume": [2], "is_anomaly": [False], "row_hash": ["fresh-hash"],
+    })
+    load_stock_history_rows(conn, _cfg(), rows_df)
+
+    supersede_stock_history_keys(conn, _cfg(), [("ENGRO", "2024-01-05")], run_started_at)
+
+    remaining_latest = conn.execute(
+        f"SELECT row_hash FROM {STOCK_HISTORY_TABLE} WHERE is_latest = TRUE"
+    ).fetchall()
+    assert remaining_latest == [("fresh-hash",)]

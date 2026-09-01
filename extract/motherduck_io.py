@@ -7,9 +7,12 @@ string differs.
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import duckdb
+import pandas as pd
 
 from extract.config import ConfigError
 
@@ -95,3 +98,54 @@ def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> 
     """
     client.execute(_CREATE_STOCK_HISTORY_SQL)
     client.execute(_CREATE_INDEX_CONSTITUENTS_SQL)
+
+
+def fetch_latest_hashes(
+    client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig, symbol: str
+) -> dict[tuple[str, str], str]:
+    """Fetch (symbol, date) -> row_hash for one symbol's is_latest rows.
+
+    No missing-table handling needed here (unlike bigquery_io's NotFound
+    catch) — ensure_dataset() always creates both tables eagerly before
+    this is ever called.
+    """
+    rows = client.execute(
+        f"SELECT symbol, date, row_hash FROM {STOCK_HISTORY_TABLE} "
+        "WHERE symbol = ? AND is_latest = TRUE",
+        [symbol],
+    ).fetchall()
+    return {(row[0], row[1].strftime("%Y-%m-%d")): row[2] for row in rows}
+
+
+def load_stock_history_rows(
+    client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig, rows_df: pd.DataFrame
+) -> None:
+    """Insert new/changed OHLCV rows into stock_history.
+
+    rows_df must already carry symbol/date/open/high/low/close/volume/
+    is_anomaly/row_hash columns (see diff.diff_against_latest). Adds
+    history_id, is_latest=True, loaded_at=now, superseded_at=NULL — same
+    shape as bigquery_io.load_stock_history_rows.
+    """
+    if rows_df.empty:
+        return
+    now = datetime.now(timezone.utc)
+
+    payload = rows_df.copy()
+    payload["date"] = pd.to_datetime(payload["date"]).dt.date
+    payload["history_id"] = [str(uuid.uuid4()) for _ in range(len(payload))]
+    payload["is_latest"] = True
+    payload["loaded_at"] = now
+    payload["superseded_at"] = None
+    payload = payload[[
+        "history_id", "symbol", "date", "open", "high", "low", "close",
+        "volume", "is_anomaly", "row_hash", "is_latest", "loaded_at", "superseded_at",
+    ]]
+
+    client.register("stock_history_payload", payload)
+    try:
+        client.execute(
+            f"INSERT INTO {STOCK_HISTORY_TABLE} SELECT * FROM stock_history_payload"
+        )
+    finally:
+        client.unregister("stock_history_payload")

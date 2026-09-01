@@ -5,17 +5,22 @@ MotherDuck. get_client() itself is tested separately with duckdb.connect
 mocked, since it's the one function that actually needs a real md: URL."""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from extract.config import ConfigError
 from extract.motherduck_io import (
+    STOCK_HISTORY_TABLE,
     MotherDuckConfig,
     ensure_dataset,
+    fetch_latest_hashes,
     get_client,
     load_config,
+    load_stock_history_rows,
 )
 
 
@@ -78,3 +83,87 @@ def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
     assert tables == {"stock_history", "index_constituents"}
+
+
+def test_fetch_latest_hashes_returns_dict_for_is_latest_rows(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    conn.execute(
+        "INSERT INTO stock_history VALUES "
+        "('h1', 'ENGRO', '2024-01-05', 481.99, 496.0, 474.01, 481.38, 4496408, "
+        "FALSE, 'abc123', TRUE, '2024-01-05 10:00:00', NULL)"
+    )
+
+    result = fetch_latest_hashes(conn, _cfg(), "ENGRO")
+
+    assert result == {("ENGRO", "2024-01-05"): "abc123"}
+
+
+def test_fetch_latest_hashes_scoped_to_requested_symbol(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    conn.execute(
+        "INSERT INTO stock_history VALUES "
+        "('h1', 'LUCK', '2024-01-05', 1.0, 1.0, 1.0, 1.0, 1, FALSE, 'zzz', TRUE, "
+        "'2024-01-05 10:00:00', NULL)"
+    )
+
+    result = fetch_latest_hashes(conn, _cfg(), "ENGRO")
+
+    assert result == {}
+
+
+def test_fetch_latest_hashes_excludes_non_latest_rows(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    conn.execute(
+        "INSERT INTO stock_history VALUES "
+        "('h1', 'ENGRO', '2024-01-05', 1.0, 1.0, 1.0, 1.0, 1, FALSE, 'old', FALSE, "
+        "'2024-01-05 10:00:00', '2024-01-06 10:00:00')"
+    )
+
+    result = fetch_latest_hashes(conn, _cfg(), "ENGRO")
+
+    assert result == {}
+
+
+def test_load_stock_history_rows_noop_on_empty_dataframe(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    load_stock_history_rows(conn, _cfg(), pd.DataFrame())
+
+    count = conn.execute(f"SELECT COUNT(*) FROM {STOCK_HISTORY_TABLE}").fetchone()[0]
+    assert count == 0
+
+
+def test_load_stock_history_rows_inserts_with_required_columns(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    rows_df = pd.DataFrame({
+        "symbol": ["ENGRO"],
+        "date": [pd.Timestamp("2024-01-05")],
+        "open": [481.99], "high": [496.0], "low": [474.01], "close": [481.38],
+        "volume": [4496408], "is_anomaly": [False], "row_hash": ["abc123"],
+    })
+
+    load_stock_history_rows(conn, _cfg(), rows_df)
+
+    row = conn.execute(
+        f"SELECT symbol, date, is_latest, superseded_at, history_id FROM {STOCK_HISTORY_TABLE}"
+    ).fetchone()
+    assert row[0] == "ENGRO"
+    assert row[1] == date(2024, 1, 5)
+    assert row[2] is True
+    assert row[3] is None
+    assert isinstance(row[4], str) and len(row[4]) > 0

@@ -5,15 +5,57 @@ get_client() and tests pass a mock instead of patching imports.
 """
 from __future__ import annotations
 
+import os
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
+from extract.config import ConfigError
+
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
+
+
+@dataclass(frozen=True)
+class BigQueryConfig:
+    """Resolved BigQuery-backend configuration."""
+
+    gcp_project: str
+    bq_dataset: str
+    bq_location: str
+
+
+def load_config() -> BigQueryConfig:
+    """Load BigQuery-backend configuration from environment variables.
+
+    Required:
+        GCP_PROJECT: GCP project ID.
+        BQ_DATASET: BigQuery dataset name (e.g. "raw").
+
+    Optional:
+        BQ_LOCATION: BigQuery dataset location, used only if the dataset
+            doesn't exist yet and needs to be created. Defaults to "US".
+
+    Raises:
+        ConfigError: If a required variable is missing.
+    """
+    gcp_project = os.environ.get("GCP_PROJECT", "").strip()
+    if not gcp_project:
+        raise ConfigError("GCP_PROJECT environment variable is required")
+
+    bq_dataset = os.environ.get("BQ_DATASET", "").strip()
+    if not bq_dataset:
+        raise ConfigError("BQ_DATASET environment variable is required")
+
+    bq_location = os.environ.get("BQ_LOCATION", "US").strip() or "US"
+
+    return BigQueryConfig(
+        gcp_project=gcp_project, bq_dataset=bq_dataset, bq_location=bq_location
+    )
 
 STOCK_HISTORY_SCHEMA = [
     bigquery.SchemaField("history_id", "STRING", mode="REQUIRED"),
@@ -50,21 +92,21 @@ def _generate_table_id(project: str, dataset: str, table: str) -> str:
     return f"{project}.{dataset}.{table}"
 
 
-def get_client(project: str) -> bigquery.Client:
+def get_client(cfg: BigQueryConfig) -> bigquery.Client:
     """Create a BigQuery client using Application Default Credentials."""
-    return bigquery.Client(project=project)
+    return bigquery.Client(project=cfg.gcp_project)
 
 
-def ensure_dataset(client: bigquery.Client, project: str, dataset: str, location: str) -> None:
+def ensure_dataset(client: bigquery.Client, cfg: BigQueryConfig) -> None:
     """Create the raw dataset if it doesn't already exist."""
-    dataset_ref = bigquery.DatasetReference(project, dataset)
+    dataset_ref = bigquery.DatasetReference(cfg.gcp_project, cfg.bq_dataset)
     ds = bigquery.Dataset(dataset_ref)
-    ds.location = location
+    ds.location = cfg.bq_location
     client.create_dataset(ds, exists_ok=True)
 
 
 def fetch_latest_hashes(
-    client: bigquery.Client, project: str, dataset: str, symbol: str
+    client: bigquery.Client, cfg: BigQueryConfig, symbol: str
 ) -> dict[tuple[str, str], str]:
     """Fetch (symbol, date) -> row_hash for one symbol's is_latest rows.
 
@@ -76,7 +118,7 @@ def fetch_latest_hashes(
         Empty dict if raw.stock_history doesn't exist yet (first-ever run)
         or the symbol has no rows yet.
     """
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     query = f"""
         SELECT symbol, date, row_hash
         FROM `{table_id}`
@@ -96,7 +138,7 @@ def fetch_latest_hashes(
 
 
 def load_stock_history_rows(
-    client: bigquery.Client, project: str, dataset: str, rows_df: pd.DataFrame
+    client: bigquery.Client, cfg: BigQueryConfig, rows_df: pd.DataFrame
 ) -> None:
     """Batch-load new/changed OHLCV rows into raw.stock_history.
 
@@ -108,7 +150,7 @@ def load_stock_history_rows(
     """
     if rows_df.empty:
         return
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = rows_df.copy()
@@ -132,8 +174,7 @@ def load_stock_history_rows(
 
 def supersede_stock_history_keys(
     client: bigquery.Client,
-    project: str,
-    dataset: str,
+    cfg: BigQueryConfig,
     keys: list[tuple[str, str]],
     run_started_at: datetime,
 ) -> None:
@@ -159,7 +200,7 @@ def supersede_stock_history_keys(
     """
     if not keys:
         return
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     composite_keys = [f"{symbol}|{date_str}" for symbol, date_str in keys]
     query = f"""
         UPDATE `{table_id}`
@@ -179,8 +220,7 @@ def supersede_stock_history_keys(
 
 def load_index_constituents(
     client: bigquery.Client,
-    project: str,
-    dataset: str,
+    cfg: BigQueryConfig,
     df: pd.DataFrame,
     index_name: str,
     snapshot_date: date,
@@ -193,7 +233,7 @@ def load_index_constituents(
     """
     if df.empty:
         return
-    table_id = _generate_table_id(project, dataset, INDEX_CONSTITUENTS_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, INDEX_CONSTITUENTS_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = df.copy()

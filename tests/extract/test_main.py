@@ -13,12 +13,7 @@ from extract.main import ExtractionFailed, main, run
 
 
 def _cfg() -> config.Config:
-    return config.Config(
-        gcp_project="test-project",
-        bq_dataset="raw",
-        index_names=("KSE100",),
-        bq_location="US",
-    )
+    return config.Config(backend="bigquery", index_names=("KSE100",))
 
 
 def _constituents_df() -> pd.DataFrame:
@@ -44,7 +39,7 @@ def test_run_writes_batched_changes_once(mock_psxdata: MagicMock, mock_bq: Magic
 
     mock_bq.load_index_constituents.assert_called_once()
     mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    written_df = mock_bq.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 2
     assert sorted(written_df["symbol"].tolist()) == ["ENGRO", "LUCK"]
     mock_bq.supersede_stock_history_keys.assert_called_once()
@@ -61,7 +56,7 @@ def test_run_skips_ticker_on_fetch_failure_and_continues(
 
     run(_cfg())
 
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    written_df = mock_bq.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "LUCK"
 
@@ -122,7 +117,7 @@ def test_run_writes_nothing_when_no_changes_detected(
         for symbol in ("ENGRO", "LUCK")
     }
     mock_bq.fetch_latest_hashes.side_effect = (
-        lambda client, project, dataset, symbol: {
+        lambda client, bq_cfg, symbol: {
             (symbol, "2024-01-05"): existing_hashes[symbol]
         }
     )
@@ -152,15 +147,15 @@ def test_run_writes_changed_row_and_supersedes_its_key(
     run(_cfg())
 
     mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    written_df = mock_bq.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "ENGRO"
 
     mock_bq.supersede_stock_history_keys.assert_called_once()
     call_args = mock_bq.supersede_stock_history_keys.call_args[0]
-    superseded_keys = call_args[3]
+    superseded_keys = call_args[2]
     assert ("ENGRO", "2024-01-05") in superseded_keys
-    run_started_at = call_args[4]
+    run_started_at = call_args[3]
     assert run_started_at is not None
 
 
@@ -185,7 +180,7 @@ def test_run_skips_ticker_with_malformed_row_and_continues(
     run(_cfg())
 
     mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    written_df = mock_bq.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "LUCK"
 

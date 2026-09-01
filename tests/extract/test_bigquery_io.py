@@ -6,21 +6,67 @@ from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 from google.api_core.exceptions import NotFound
 
 from extract.bigquery_io import (
+    BigQueryConfig,
     ensure_dataset,
     fetch_latest_hashes,
     load_index_constituents,
     load_stock_history_rows,
     supersede_stock_history_keys,
 )
+from extract.bigquery_io import load_config as bq_load_config
+from extract.config import ConfigError
+
+
+def test_bq_load_config_reads_required_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GCP_PROJECT", "psx-warehouse-prod")
+    monkeypatch.setenv("BQ_DATASET", "raw")
+    monkeypatch.delenv("BQ_LOCATION", raising=False)
+
+    cfg = bq_load_config()
+
+    assert cfg == BigQueryConfig(
+        gcp_project="psx-warehouse-prod", bq_dataset="raw", bq_location="US"
+    )
+
+
+def test_bq_load_config_reads_custom_location(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GCP_PROJECT", "p")
+    monkeypatch.setenv("BQ_DATASET", "raw")
+    monkeypatch.setenv("BQ_LOCATION", "asia-south1")
+
+    cfg = bq_load_config()
+
+    assert cfg.bq_location == "asia-south1"
+
+
+def test_bq_load_config_raises_when_gcp_project_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GCP_PROJECT", raising=False)
+    monkeypatch.setenv("BQ_DATASET", "raw")
+
+    with pytest.raises(ConfigError, match="GCP_PROJECT"):
+        bq_load_config()
+
+
+def test_bq_load_config_raises_when_bq_dataset_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GCP_PROJECT", "p")
+    monkeypatch.delenv("BQ_DATASET", raising=False)
+
+    with pytest.raises(ConfigError, match="BQ_DATASET"):
+        bq_load_config()
+
+
+def _cfg() -> BigQueryConfig:
+    return BigQueryConfig(gcp_project="proj", bq_dataset="raw", bq_location="US")
 
 
 def test_ensure_dataset_creates_with_exists_ok() -> None:
     client = MagicMock()
 
-    ensure_dataset(client, "proj", "raw", "US")
+    ensure_dataset(client, _cfg())
 
     client.create_dataset.assert_called_once()
     args, kwargs = client.create_dataset.call_args
@@ -36,7 +82,7 @@ def test_fetch_latest_hashes_builds_dict_from_query_result() -> None:
         {"symbol": "ENGRO", "date": date(2024, 1, 4), "row_hash": "def456"},
     ]
 
-    result = fetch_latest_hashes(client, "proj", "raw", "ENGRO")
+    result = fetch_latest_hashes(client, _cfg(), "ENGRO")
 
     assert result == {
         ("ENGRO", "2024-01-05"): "abc123",
@@ -53,7 +99,7 @@ def test_fetch_latest_hashes_returns_empty_dict_when_table_missing() -> None:
     client = MagicMock()
     client.query.side_effect = NotFound("table not found")
 
-    result = fetch_latest_hashes(client, "proj", "raw", "ENGRO")
+    result = fetch_latest_hashes(client, _cfg(), "ENGRO")
 
     assert result == {}
 
@@ -61,7 +107,7 @@ def test_fetch_latest_hashes_returns_empty_dict_when_table_missing() -> None:
 def test_load_stock_history_rows_noop_on_empty_dataframe() -> None:
     client = MagicMock()
 
-    load_stock_history_rows(client, "proj", "raw", pd.DataFrame())
+    load_stock_history_rows(client, _cfg(), pd.DataFrame())
 
     client.load_table_from_dataframe.assert_not_called()
 
@@ -75,7 +121,7 @@ def test_load_stock_history_rows_adds_required_columns_and_loads() -> None:
         "volume": [4496408], "is_anomaly": [False], "row_hash": ["abc123"],
     })
 
-    load_stock_history_rows(client, "proj", "raw", rows_df)
+    load_stock_history_rows(client, _cfg(), rows_df)
 
     client.load_table_from_dataframe.assert_called_once()
     payload, table_id = client.load_table_from_dataframe.call_args[0]
@@ -93,7 +139,7 @@ def test_supersede_stock_history_keys_noop_on_empty_list() -> None:
     client = MagicMock()
     run_started_at = datetime(2024, 1, 5, 12, 0, 0, tzinfo=timezone.utc)
 
-    supersede_stock_history_keys(client, "proj", "raw", [], run_started_at)
+    supersede_stock_history_keys(client, _cfg(), [], run_started_at)
 
     client.query.assert_not_called()
 
@@ -103,7 +149,7 @@ def test_supersede_stock_history_keys_builds_composite_key_update() -> None:
     run_started_at = datetime(2024, 1, 5, 12, 0, 0, tzinfo=timezone.utc)
 
     supersede_stock_history_keys(
-        client, "proj", "raw", [("ENGRO", "2024-01-04")], run_started_at
+        client, _cfg(), [("ENGRO", "2024-01-04")], run_started_at
     )
 
     query_arg = client.query.call_args[0][0]
@@ -125,7 +171,7 @@ def test_supersede_stock_history_keys_builds_composite_key_update() -> None:
 def test_load_index_constituents_noop_on_empty_dataframe() -> None:
     client = MagicMock()
 
-    load_index_constituents(client, "proj", "raw", pd.DataFrame(), "KSE100", date(2024, 1, 5))
+    load_index_constituents(client, _cfg(), pd.DataFrame(), "KSE100", date(2024, 1, 5))
 
     client.load_table_from_dataframe.assert_not_called()
 
@@ -137,7 +183,7 @@ def test_load_index_constituents_adds_index_and_snapshot_columns() -> None:
         "idx_point": [2000.0], "market_cap_m": [150000.0], "freefloat_m": [40.0],
     })
 
-    load_index_constituents(client, "proj", "raw", df, "KSE100", date(2024, 1, 5))
+    load_index_constituents(client, _cfg(), df, "KSE100", date(2024, 1, 5))
 
     payload, table_id = client.load_table_from_dataframe.call_args[0]
     assert table_id == "proj.raw.index_constituents"

@@ -37,8 +37,9 @@ def run(cfg: config.Config) -> None:
             which is the intended fail-loud behavior.
     """
     run_started_at = datetime.now(timezone.utc)
-    client = bigquery_io.get_client(cfg.gcp_project)
-    bigquery_io.ensure_dataset(client, cfg.gcp_project, cfg.bq_dataset, cfg.bq_location)
+    bq_cfg = bigquery_io.load_config()
+    client = bigquery_io.get_client(bq_cfg)
+    bigquery_io.ensure_dataset(client, bq_cfg)
 
     today = date.today()
     all_symbols: set[str] = set()
@@ -55,7 +56,7 @@ def run(cfg: config.Config) -> None:
             raise ExtractionFailed(f"Index {index_name} returned no constituents")
 
         bigquery_io.load_index_constituents(
-            client, cfg.gcp_project, cfg.bq_dataset, constituents_df, index_name, today
+            client, bq_cfg, constituents_df, index_name, today
         )
         all_symbols.update(constituents_df["symbol"].tolist())
 
@@ -84,9 +85,7 @@ def run(cfg: config.Config) -> None:
             logger.warning("Skipping %s: malformed row data (%s)", symbol, exc)
             continue
 
-        existing = bigquery_io.fetch_latest_hashes(
-            client, cfg.gcp_project, cfg.bq_dataset, symbol
-        )
+        existing = bigquery_io.fetch_latest_hashes(client, bq_cfg, symbol)
         rows_to_insert, superseded_keys = diff_against_latest(hashed_df, existing)
 
         if not rows_to_insert.empty:
@@ -98,11 +97,9 @@ def run(cfg: config.Config) -> None:
 
     if rows_to_insert_parts:
         all_rows_to_insert = pd.concat(rows_to_insert_parts, ignore_index=True)
-        bigquery_io.load_stock_history_rows(
-            client, cfg.gcp_project, cfg.bq_dataset, all_rows_to_insert
-        )
+        bigquery_io.load_stock_history_rows(client, bq_cfg, all_rows_to_insert)
         bigquery_io.supersede_stock_history_keys(
-            client, cfg.gcp_project, cfg.bq_dataset, all_superseded_keys, run_started_at
+            client, bq_cfg, all_superseded_keys, run_started_at
         )
         logger.info("Extraction complete: %d rows written", len(all_rows_to_insert))
     else:

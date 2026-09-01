@@ -17,7 +17,7 @@ import pandas as pd
 import psxdata
 from psxdata.exceptions import PSXDataError
 
-from extract import bigquery_io, config
+from extract import bigquery_io, config, motherduck_io
 from extract.diff import add_row_hashes, diff_against_latest
 from extract.storage import RawStorage
 
@@ -49,6 +49,8 @@ def _get_storage(backend: str) -> _StorageModule:
     exist — config.py stays backend-agnostic so adding a backend never
     requires editing it.
     """
+    if backend == "motherduck":
+        return motherduck_io
     if backend == "bigquery":
         return bigquery_io
     raise ExtractionFailed(f"Unsupported BACKEND: {backend!r}")

@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 from psxdata.exceptions import PSXConnectionError
 
-from extract import config
-from extract.main import ExtractionFailed, main, run
+from extract import bigquery_io, config, motherduck_io
+from extract.main import ExtractionFailed, _get_storage, main, run
 
 
 def _cfg() -> config.Config:
@@ -182,6 +182,19 @@ def test_run_skips_ticker_with_malformed_row_and_continues(
     written_df = mock_storage.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "LUCK"
+
+
+def test_get_storage_selects_bigquery() -> None:
+    assert _get_storage("bigquery") is bigquery_io
+
+
+def test_get_storage_selects_motherduck() -> None:
+    assert _get_storage("motherduck") is motherduck_io
+
+
+def test_get_storage_raises_on_unknown_backend() -> None:
+    with pytest.raises(ExtractionFailed, match="snowflake"):
+        _get_storage("snowflake")
 
 
 @patch("extract.main.config.load_config", side_effect=config.ConfigError("GCP_PROJECT missing"))

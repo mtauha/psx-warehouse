@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import duckdb
 import pandas as pd
@@ -184,3 +184,45 @@ def supersede_stock_history_keys(
         """,
         [*composite_keys, run_started_at],
     )
+
+
+def load_index_constituents(
+    client: duckdb.DuckDBPyConnection,
+    cfg: MotherDuckConfig,
+    df: pd.DataFrame,
+    index_name: str,
+    snapshot_date: date,
+) -> None:
+    """Insert one index's constituent snapshot into index_constituents.
+
+    Always inserts (no dedup) — same semantics as
+    bigquery_io.load_index_constituents: idx_weight/idx_point/market_cap_m
+    move day to day even when membership doesn't.
+    """
+    if df.empty:
+        return
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["index_name"] = index_name
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    optional_cols = (
+        "current_index", "idx_weight", "idx_point",
+        "market_cap_m", "freefloat_m", "shares_m"
+    )
+    for optional_col in optional_cols:
+        if optional_col not in payload.columns:
+            payload[optional_col] = pd.NA
+    payload = payload[[
+        "index_name", "symbol", "snapshot_date", "current_index", "idx_weight",
+        "idx_point", "market_cap_m", "freefloat_m", "shares_m", "loaded_at",
+    ]]
+
+    client.register("index_constituents_payload", payload)
+    try:
+        client.execute(
+            f"INSERT INTO {INDEX_CONSTITUENTS_TABLE} SELECT * FROM index_constituents_payload"
+        )
+    finally:
+        client.unregister("index_constituents_payload")

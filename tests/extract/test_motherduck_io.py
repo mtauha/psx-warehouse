@@ -20,6 +20,7 @@ from extract.motherduck_io import (
     fetch_latest_hashes,
     get_client,
     load_config,
+    load_index_constituents,
     load_stock_history_rows,
     supersede_stock_history_keys,
 )
@@ -235,3 +236,49 @@ def test_supersede_stock_history_keys_excludes_just_inserted_row(tmp_path: Path)
         f"SELECT row_hash FROM {STOCK_HISTORY_TABLE} WHERE is_latest = TRUE"
     ).fetchall()
     assert remaining_latest == [("fresh-hash",)]
+
+
+def test_load_index_constituents_noop_on_empty_dataframe(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    load_index_constituents(conn, _cfg(), pd.DataFrame(), "KSE100", date(2024, 1, 5))
+
+    count = conn.execute(f"SELECT COUNT(*) FROM index_constituents").fetchone()[0]
+    assert count == 0
+
+
+def test_load_index_constituents_adds_index_and_snapshot_columns(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame({
+        "symbol": ["ENGRO"], "current_index": [45000.0], "idx_weight": [5.2],
+        "idx_point": [2000.0], "market_cap_m": [150000.0], "freefloat_m": [40.0],
+    })
+
+    load_index_constituents(conn, _cfg(), df, "KSE100", date(2024, 1, 5))
+
+    row = conn.execute(
+        "SELECT index_name, snapshot_date, shares_m FROM index_constituents"
+    ).fetchone()
+    assert row[0] == "KSE100"
+    assert row[1] == date(2024, 1, 5)
+    assert row[2] is None
+
+
+def test_load_index_constituents_always_inserts_no_dedup(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame({"symbol": ["ENGRO"]})
+
+    load_index_constituents(conn, _cfg(), df, "KSE100", date(2024, 1, 5))
+    load_index_constituents(conn, _cfg(), df, "KSE100", date(2024, 1, 5))
+
+    count = conn.execute("SELECT COUNT(*) FROM index_constituents").fetchone()[0]
+    assert count == 2

@@ -49,9 +49,11 @@ class RawStorage(Protocol):
 
 
 if TYPE_CHECKING:
-    # Static-only conformance check: if bigquery_io's function shapes ever
-    # drift from RawStorage, mypy fails this assignment. Not a runtime
-    # import — TYPE_CHECKING is always False at import time.
+    # Static-only conformance checks: if either backend's function shapes
+    # ever drift from RawStorage, mypy fails these assignments. Not a
+    # runtime import — TYPE_CHECKING is always False at import time.
     from extract import bigquery_io as _bigquery_io_check
+    from extract import motherduck_io as _motherduck_io_check
 
     _verify_bigquery_io: RawStorage = _bigquery_io_check
+    _verify_motherduck_io: RawStorage = _motherduck_io_check

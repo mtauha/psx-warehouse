@@ -19,6 +19,31 @@ from extract.config import ConfigError
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
 
+# Single source of truth for each table's raw-layer column order. Used both
+# to reindex the insert payload and to build an explicit named-column INSERT
+# (see load_stock_history_rows/load_index_constituents) so the two never
+# drift apart -- a positional "INSERT INTO ... SELECT *" against a
+# hand-duplicated column list would silently swap same-typed adjacent
+# columns (e.g. open/high/low/close) if the DDL and payload orders diverged.
+# This tuple's order must match the DDL below exactly; the DDL is the
+# authoritative reference.
+_STOCK_HISTORY_COLUMNS = (
+    "history_id", "symbol", "date", "open", "high", "low", "close",
+    "volume", "is_anomaly", "row_hash", "is_latest", "loaded_at", "superseded_at",
+)
+
+_INDEX_CONSTITUENTS_COLUMNS = (
+    "index_name", "symbol", "snapshot_date", "current_index", "idx_weight",
+    "idx_point", "market_cap_m", "freefloat_m", "shares_m", "loaded_at",
+)
+
+# loaded_at/superseded_at are TIMESTAMP WITH TIME ZONE (DuckDB's TIMESTAMPTZ),
+# not plain TIMESTAMP: a plain TIMESTAMP column stores naive wall-clock time,
+# so a tz-aware datetime.now(timezone.utc) value gets silently reinterpreted
+# through the connection's SESSION timezone on insert (verified: with session
+# TimeZone=Asia/Karachi, a UTC value was stored shifted to local time,
+# losing the UTC offset). TIMESTAMPTZ stores an absolute instant regardless
+# of session timezone, matching BigQuery's TIMESTAMP semantics.
 _CREATE_STOCK_HISTORY_SQL = f"""
     CREATE TABLE IF NOT EXISTS {STOCK_HISTORY_TABLE} (
         history_id VARCHAR NOT NULL,
@@ -32,8 +57,8 @@ _CREATE_STOCK_HISTORY_SQL = f"""
         is_anomaly BOOLEAN NOT NULL,
         row_hash VARCHAR NOT NULL,
         is_latest BOOLEAN NOT NULL,
-        loaded_at TIMESTAMP NOT NULL,
-        superseded_at TIMESTAMP
+        loaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        superseded_at TIMESTAMP WITH TIME ZONE
     )
 """
 
@@ -48,7 +73,7 @@ _CREATE_INDEX_CONSTITUENTS_SQL = f"""
         market_cap_m DOUBLE,
         freefloat_m DOUBLE,
         shares_m DOUBLE,
-        loaded_at TIMESTAMP NOT NULL
+        loaded_at TIMESTAMP WITH TIME ZONE NOT NULL
     )
 """
 
@@ -83,8 +108,16 @@ def load_config() -> MotherDuckConfig:
 
 
 def get_client(cfg: MotherDuckConfig) -> duckdb.DuckDBPyConnection:
-    """Connect to the configured MotherDuck database."""
-    return duckdb.connect(f"md:{cfg.md_database}?motherduck_token={cfg.motherduck_token}")
+    """Connect to the configured MotherDuck database.
+
+    The token is not embedded in the connection string: load_config()
+    requires MOTHERDUCK_TOKEN to already be set as a real environment
+    variable, and DuckDB's MotherDuck extension reads motherduck_token from
+    the environment on its own. Keeping it out of the connection string
+    means it never appears in a traceback or log line that captures the
+    connection string.
+    """
+    return duckdb.connect(f"md:{cfg.md_database}")
 
 
 def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> None:
@@ -137,15 +170,14 @@ def load_stock_history_rows(
     payload["is_latest"] = True
     payload["loaded_at"] = now
     payload["superseded_at"] = None
-    payload = payload[[
-        "history_id", "symbol", "date", "open", "high", "low", "close",
-        "volume", "is_anomaly", "row_hash", "is_latest", "loaded_at", "superseded_at",
-    ]]
+    payload = payload[list(_STOCK_HISTORY_COLUMNS)]
 
     client.register("stock_history_payload", payload)
     try:
+        column_list = ", ".join(_STOCK_HISTORY_COLUMNS)
         client.execute(
-            f"INSERT INTO {STOCK_HISTORY_TABLE} SELECT * FROM stock_history_payload"
+            f"INSERT INTO {STOCK_HISTORY_TABLE} ({column_list}) "
+            f"SELECT {column_list} FROM stock_history_payload"
         )
     finally:
         client.unregister("stock_history_payload")
@@ -214,15 +246,14 @@ def load_index_constituents(
     for optional_col in optional_cols:
         if optional_col not in payload.columns:
             payload[optional_col] = pd.NA
-    payload = payload[[
-        "index_name", "symbol", "snapshot_date", "current_index", "idx_weight",
-        "idx_point", "market_cap_m", "freefloat_m", "shares_m", "loaded_at",
-    ]]
+    payload = payload[list(_INDEX_CONSTITUENTS_COLUMNS)]
 
     client.register("index_constituents_payload", payload)
     try:
+        column_list = ", ".join(_INDEX_CONSTITUENTS_COLUMNS)
         client.execute(
-            f"INSERT INTO {INDEX_CONSTITUENTS_TABLE} SELECT * FROM index_constituents_payload"
+            f"INSERT INTO {INDEX_CONSTITUENTS_TABLE} ({column_list}) "
+            f"SELECT {column_list} FROM index_constituents_payload"
         )
     finally:
         client.unregister("index_constituents_payload")

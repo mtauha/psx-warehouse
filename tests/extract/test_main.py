@@ -1,5 +1,7 @@
-"""Unit tests for extract.main orchestration. psxdata and bigquery_io are
-mocked at the module level — no live PSX or GCP access."""
+"""Unit tests for extract.main orchestration. psxdata is mocked at the
+module level; run()-level tests inject a mock storage object directly
+rather than patching a specific backend module — no live PSX or GCP
+access."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch

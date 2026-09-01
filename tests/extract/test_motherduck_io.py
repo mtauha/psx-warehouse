@@ -57,11 +57,16 @@ def test_load_config_raises_when_database_missing(monkeypatch: pytest.MonkeyPatc
 
 @patch("extract.motherduck_io.duckdb")
 def test_get_client_builds_md_connection_string(mock_duckdb: MagicMock) -> None:
+    """The token must not appear in the connection string — DuckDB's
+    MotherDuck extension reads motherduck_token from the environment on its
+    own, and load_config() already requires MOTHERDUCK_TOKEN to be set
+    there. Keeping it out of the connection string means it never shows up
+    in a traceback or log line that captures the string."""
     cfg = MotherDuckConfig(motherduck_token="tok123", md_database="raw_dev")
 
     get_client(cfg)
 
-    mock_duckdb.connect.assert_called_once_with("md:raw_dev?motherduck_token=tok123")
+    mock_duckdb.connect.assert_called_once_with("md:raw_dev")
 
 
 def test_ensure_dataset_creates_both_tables(tmp_path: Path) -> None:
@@ -268,6 +273,37 @@ def test_load_index_constituents_adds_index_and_snapshot_columns(tmp_path: Path)
     assert row[0] == "KSE100"
     assert row[1] == date(2024, 1, 5)
     assert row[2] is None
+
+
+def test_loaded_at_round_trips_as_utc_regardless_of_session_timezone(tmp_path: Path) -> None:
+    """Regression guard for the naive-TIMESTAMP bug: loaded_at/superseded_at
+    must be TIMESTAMP WITH TIME ZONE so a tz-aware UTC value survives a
+    round trip unchanged even when the connection's session TimeZone is set
+    to something other than UTC (e.g. Asia/Karachi, UTC+5) — a plain
+    TIMESTAMP column would silently reinterpret the UTC value as local
+    wall-clock time and shift it by the offset."""
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    conn.execute("SET TimeZone = 'Asia/Karachi'")
+
+    known_utc = datetime(2024, 1, 5, 23, 30, 0, tzinfo=timezone.utc)
+    rows_df = pd.DataFrame({
+        "symbol": ["ENGRO"], "date": [pd.Timestamp("2024-01-05")],
+        "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0],
+        "volume": [1], "is_anomaly": [False], "row_hash": ["abc"],
+    })
+    with patch("extract.motherduck_io.datetime") as mock_datetime:
+        mock_datetime.now.return_value = known_utc
+        load_stock_history_rows(conn, _cfg(), rows_df)
+
+    loaded_at = conn.execute(
+        f"SELECT loaded_at FROM {STOCK_HISTORY_TABLE} WHERE symbol = 'ENGRO'"
+    ).fetchone()[0]
+
+    assert loaded_at.utctimetuple()[:6] == known_utc.utctimetuple()[:6]
+    assert loaded_at.astimezone(timezone.utc) == known_utc
 
 
 def test_load_index_constituents_always_inserts_no_dedup(tmp_path: Path) -> None:

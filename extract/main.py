@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 
 import pandas as pd
 import psxdata
@@ -28,7 +28,21 @@ class ExtractionFailed(Exception):
     """Raised for conditions that should exit the job non-zero."""
 
 
-def _get_storage(backend: str) -> RawStorage:
+class _StorageModule(RawStorage, Protocol):
+    """RawStorage plus the one extra method main() needs before run().
+
+    load_config() is deliberately not part of RawStorage itself
+    (extract/storage.py): each backend owns its own concrete config type,
+    so the shared Protocol can't declare a single return type for it. This
+    narrower local Protocol adds just that one method for main()'s use,
+    without touching RawStorage or run()'s signature — a module satisfying
+    _StorageModule still structurally satisfies RawStorage everywhere else.
+    """
+
+    def load_config(self) -> Any: ...
+
+
+def _get_storage(backend: str) -> _StorageModule:
     """Resolve a backend name to its storage module.
 
     Deliberately the only place in extract/ that knows which backend names
@@ -127,10 +141,7 @@ def main() -> int:
     try:
         cfg = config.load_config()
         storage = _get_storage(cfg.backend)
-        # load_config() is deliberately not part of RawStorage (extract/storage.py):
-        # each backend owns its own concrete config type, so the shared
-        # Protocol can't declare a single return type for it.
-        backend_cfg = storage.load_config()  # type: ignore[attr-defined]
+        backend_cfg = storage.load_config()
         run(cfg, storage, backend_cfg)
     except (config.ConfigError, ExtractionFailed) as exc:
         logger.error(str(exc))

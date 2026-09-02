@@ -18,7 +18,12 @@ import psxdata
 from psxdata.exceptions import PSXDataError
 
 from extract import bigquery_io, config, motherduck_io
-from extract.diff import add_row_hashes, diff_against_latest
+from extract.diff import (
+    add_row_hashes,
+    add_symbol_row_hashes,
+    diff_against_latest,
+    diff_symbols_against_latest,
+)
 from extract.storage import RawStorage
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,37 @@ logger = logging.getLogger(__name__)
 
 class ExtractionFailed(Exception):
     """Raised for conditions that should exit the job non-zero."""
+
+
+def _fetch_margin_eligible_symbols() -> set[str]:
+    """Union of symbols appearing in any of eligible_scrips()'s 9 category
+    tables. Category labels (table_0..table_8) are fallback positional
+    keys, not real names (see psxdata's own scraper docstring) -- only
+    presence across the union is meaningful, not which table a symbol is in.
+
+    Returns an empty set (not a raised exception) if eligible_scrips()
+    itself fails -- found by independent review: an earlier draft left
+    this call unguarded, so a PSXDataError here would propagate all the
+    way out of run() uncaught (main() only catches ConfigError and
+    ExtractionFailed), crashing the whole process before the OHLCV loop
+    even starts, contradicting this function's own intended "non-fatal"
+    design. An empty set here just means every symbol gets
+    is_margin_eligible=False for this run -- self-healing, since the next
+    run's fresh eligible_scrips() call retries independently.
+    """
+    try:
+        tables = psxdata.eligible_scrips(cache=False)
+    except PSXDataError as exc:
+        logger.warning(
+            "eligible_scrips() failed, is_margin_eligible defaults to False this run: %s",
+            exc,
+        )
+        return set()
+    symbols: set[str] = set()
+    for df in tables.values():
+        if not df.empty and "symbol" in df.columns:
+            symbols.update(df["symbol"].astype(str).tolist())
+    return symbols
 
 
 class _StorageModule(RawStorage, Protocol):
@@ -88,6 +124,30 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
             client, backend_cfg, constituents_df, index_name, today
         )
         all_symbols.update(constituents_df["symbol"].tolist())
+
+    try:
+        symbols_df = psxdata.symbols(cache=False)
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.symbols this run: symbols() failed (%s)", exc)
+        symbols_df = pd.DataFrame()
+
+    if not symbols_df.empty:
+        margin_eligible = _fetch_margin_eligible_symbols()
+        symbols_df = symbols_df.copy()
+        symbols_df["is_margin_eligible"] = symbols_df["symbol"].isin(margin_eligible)
+
+        hashed_symbols_df = add_symbol_row_hashes(symbols_df)
+        existing_symbols = storage.fetch_latest_symbol_hashes(client, backend_cfg)
+        symbols_to_insert, changed_symbol_keys, delisted_symbol_keys = (
+            diff_symbols_against_latest(hashed_symbols_df, existing_symbols)
+        )
+
+        if not symbols_to_insert.empty:
+            storage.load_symbols_rows(client, backend_cfg, symbols_to_insert)
+        superseded_symbol_keys = changed_symbol_keys + delisted_symbol_keys
+        storage.supersede_symbol_keys(
+            client, backend_cfg, superseded_symbol_keys, run_started_at
+        )
 
     rows_to_insert_parts: list[pd.DataFrame] = []
     all_superseded_keys: list[tuple[str, str]] = []

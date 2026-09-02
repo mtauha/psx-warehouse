@@ -223,3 +223,72 @@ def test_main_returns_0_on_success(
     mock_load_config: MagicMock, mock_run: MagicMock, mock_bigquery_io: MagicMock
 ) -> None:
     assert main() == 0
+
+
+@patch("extract.main.psxdata")
+def test_run_loads_new_symbols_and_supersedes_delisted(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+    }])
+    mock_psxdata.eligible_scrips.return_value = {
+        "table_0": pd.DataFrame([{"symbol": "ENGRO", "name": "Engro Corporation"}])
+    }
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.fetch_latest_symbol_hashes.return_value = {"DELISTEDCO": "old-hash"}
+
+    run(_cfg(), mock_storage, MagicMock())
+
+    mock_storage.load_symbols_rows.assert_called_once()
+    loaded_df = mock_storage.load_symbols_rows.call_args[0][2]
+    assert loaded_df.iloc[0]["is_margin_eligible"] == True  # noqa: E712
+
+    mock_storage.supersede_symbol_keys.assert_called_once()
+    superseded_keys = mock_storage.supersede_symbol_keys.call_args[0][2]
+    assert "DELISTEDCO" in superseded_keys
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_symbols_fetch_fails(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.side_effect = PSXConnectionError("down")
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_not_called()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_eligible_scrips_fetch_fails(mock_psxdata: MagicMock) -> None:
+    """Regression guard from independent review: eligible_scrips() failing
+    must not crash the whole run -- symbols() itself succeeded, so
+    raw.symbols should still get written, just with is_margin_eligible
+    defaulting to False for everyone this run."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+    }])
+    mock_psxdata.eligible_scrips.side_effect = PSXConnectionError("down")
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.fetch_latest_symbol_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_called_once()
+    loaded_df = mock_storage.load_symbols_rows.call_args[0][2]
+    assert loaded_df.iloc[0]["is_margin_eligible"] == False  # noqa: E712

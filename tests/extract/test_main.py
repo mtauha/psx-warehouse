@@ -269,6 +269,26 @@ def test_run_continues_when_symbols_fetch_fails(mock_psxdata: MagicMock) -> None
 
 
 @patch("extract.main.psxdata")
+def test_run_continues_when_symbols_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """Everything after the symbols() fetch (isin filter, row hashing) must
+    be guarded too -- a malformed payload (missing columns) should be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{"symbol": "ENGRO"}])
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
 def test_run_continues_when_eligible_scrips_fetch_fails(mock_psxdata: MagicMock) -> None:
     """Regression guard from independent review: eligible_scrips() failing
     must not crash the whole run -- symbols() itself succeeded, so

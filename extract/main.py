@@ -132,22 +132,29 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
         symbols_df = pd.DataFrame()
 
     if not symbols_df.empty:
-        margin_eligible = _fetch_margin_eligible_symbols()
-        symbols_df = symbols_df.copy()
-        symbols_df["is_margin_eligible"] = symbols_df["symbol"].isin(margin_eligible)
+        try:
+            margin_eligible = _fetch_margin_eligible_symbols()
+            symbols_df = symbols_df.copy()
+            symbols_df["is_margin_eligible"] = symbols_df["symbol"].isin(margin_eligible)
+            hashed_symbols_df = add_symbol_row_hashes(symbols_df)
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.warning(
+                "Skipping raw.symbols this run: malformed symbol data (%s)", exc
+            )
+            hashed_symbols_df = pd.DataFrame()
 
-        hashed_symbols_df = add_symbol_row_hashes(symbols_df)
-        existing_symbols = storage.fetch_latest_symbol_hashes(client, backend_cfg)
-        symbols_to_insert, changed_symbol_keys, delisted_symbol_keys = (
-            diff_symbols_against_latest(hashed_symbols_df, existing_symbols)
-        )
+        if not hashed_symbols_df.empty:
+            existing_symbols = storage.fetch_latest_symbol_hashes(client, backend_cfg)
+            symbols_to_insert, changed_symbol_keys, delisted_symbol_keys = (
+                diff_symbols_against_latest(hashed_symbols_df, existing_symbols)
+            )
 
-        if not symbols_to_insert.empty:
-            storage.load_symbols_rows(client, backend_cfg, symbols_to_insert)
-        superseded_symbol_keys = changed_symbol_keys + delisted_symbol_keys
-        storage.supersede_symbol_keys(
-            client, backend_cfg, superseded_symbol_keys, run_started_at
-        )
+            if not symbols_to_insert.empty:
+                storage.load_symbols_rows(client, backend_cfg, symbols_to_insert)
+            superseded_symbol_keys = changed_symbol_keys + delisted_symbol_keys
+            storage.supersede_symbol_keys(
+                client, backend_cfg, superseded_symbol_keys, run_started_at
+            )
 
     rows_to_insert_parts: list[pd.DataFrame] = []
     all_superseded_keys: list[tuple[str, str]] = []

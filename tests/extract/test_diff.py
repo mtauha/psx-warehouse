@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from extract.diff import add_row_hashes, compute_row_hash, diff_against_latest
+from extract.diff import (
+    add_row_hashes,
+    add_symbol_row_hashes,
+    compute_row_hash,
+    compute_symbol_row_hash,
+    diff_against_latest,
+    diff_symbols_against_latest,
+)
 
 
 def _row(symbol: str = "ENGRO", close: float = 481.38) -> pd.Series:
@@ -100,3 +107,109 @@ def test_diff_against_latest_handles_empty_fresh_df() -> None:
     to_insert, superseded = diff_against_latest(fresh, existing={})
     assert to_insert.empty
     assert superseded == []
+
+
+def _symbol_row(**overrides: object) -> pd.Series:
+    base = {
+        "symbol": "ENGRO",
+        "name": "Engro Corporation",
+        "sector_name": "Chemical",
+        "is_etf": False,
+        "is_debt": False,
+        "is_gem": False,
+        "is_margin_eligible": True,
+    }
+    base.update(overrides)
+    return pd.Series(base)
+
+
+def test_compute_symbol_row_hash_deterministic() -> None:
+    row = _symbol_row()
+    assert compute_symbol_row_hash(row) == compute_symbol_row_hash(row)
+
+
+def test_compute_symbol_row_hash_changes_when_sector_changes() -> None:
+    row_a = _symbol_row(sector_name="Chemical")
+    row_b = _symbol_row(sector_name="Fertilizer")
+    assert compute_symbol_row_hash(row_a) != compute_symbol_row_hash(row_b)
+
+
+def test_add_symbol_row_hashes_empty_df() -> None:
+    empty = pd.DataFrame(
+        columns=[
+            "symbol",
+            "name",
+            "sector_name",
+            "is_etf",
+            "is_debt",
+            "is_gem",
+            "is_margin_eligible",
+        ]
+    )
+    result = add_symbol_row_hashes(empty)
+    assert result.empty
+    assert "row_hash" in result.columns
+
+
+def test_diff_symbols_against_latest_new_symbol() -> None:
+    fresh = add_symbol_row_hashes(pd.DataFrame([_symbol_row().to_dict()]))
+
+    to_insert, changed, delisted = diff_symbols_against_latest(fresh, existing={})
+
+    assert list(to_insert["symbol"]) == ["ENGRO"]
+    assert changed == []
+    assert delisted == []
+
+
+def test_diff_symbols_against_latest_changed_symbol() -> None:
+    fresh = add_symbol_row_hashes(
+        pd.DataFrame([_symbol_row(sector_name="Fertilizer").to_dict()])
+    )
+    old_hash = compute_symbol_row_hash(_symbol_row(sector_name="Chemical"))
+
+    to_insert, changed, delisted = diff_symbols_against_latest(
+        fresh, existing={"ENGRO": old_hash}
+    )
+
+    assert list(to_insert["symbol"]) == ["ENGRO"]
+    assert changed == ["ENGRO"]
+    assert delisted == []
+
+
+def test_diff_symbols_against_latest_unchanged_symbol() -> None:
+    row = _symbol_row()
+    fresh = add_symbol_row_hashes(pd.DataFrame([row.to_dict()]))
+    same_hash = compute_symbol_row_hash(row)
+
+    to_insert, changed, delisted = diff_symbols_against_latest(
+        fresh, existing={"ENGRO": same_hash}
+    )
+
+    assert to_insert.empty
+    assert changed == []
+    assert delisted == []
+
+
+def test_diff_symbols_against_latest_delisted_symbol() -> None:
+    fresh = add_symbol_row_hashes(pd.DataFrame([_symbol_row().to_dict()]))
+    old_hash = compute_symbol_row_hash(_symbol_row())
+
+    to_insert, changed, delisted = diff_symbols_against_latest(
+        fresh, existing={"ENGRO": old_hash, "DELISTEDCO": "some-other-hash"}
+    )
+
+    assert to_insert.empty
+    assert changed == []
+    assert delisted == ["DELISTEDCO"]
+
+
+def test_diff_symbols_against_latest_empty_fresh_returns_all_as_delisted() -> None:
+    empty = pd.DataFrame(columns=["symbol", "row_hash"])
+
+    to_insert, changed, delisted = diff_symbols_against_latest(
+        empty, existing={"ENGRO": "h1", "LUCK": "h2"}
+    )
+
+    assert to_insert.empty
+    assert changed == []
+    assert sorted(delisted) == ["ENGRO", "LUCK"]

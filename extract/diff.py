@@ -86,3 +86,88 @@ def diff_against_latest(
     rows_to_insert = fresh_df[to_insert_mask].reset_index(drop=True)
     superseded_keys = [key for key, changed in zip(keys, is_changed) if changed]
     return rows_to_insert, superseded_keys
+
+
+def compute_symbol_row_hash(row: pd.Series) -> str:
+    """Compute a SHA-256 fingerprint of one ticker-attribute row's content.
+
+    Args:
+        row: A pandas Series with at least symbol, name, sector_name,
+            is_etf, is_debt, is_gem, is_margin_eligible.
+
+    Returns:
+        64-character lowercase hex SHA-256 digest over
+        "symbol|name|sector_name|is_etf|is_debt|is_gem|is_margin_eligible".
+    """
+    parts = [
+        str(row["symbol"]),
+        str(row["name"]),
+        str(row["sector_name"]),
+        str(bool(row["is_etf"])),
+        str(bool(row["is_debt"])),
+        str(bool(row["is_gem"])),
+        str(bool(row["is_margin_eligible"])),
+    ]
+    payload = "|".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def add_symbol_row_hashes(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of df with a row_hash column computed for every row."""
+    result = df.copy()
+    if result.empty:
+        result["row_hash"] = pd.Series(dtype="object")
+        return result
+    result["row_hash"] = result.apply(compute_symbol_row_hash, axis=1)
+    return result
+
+
+def diff_symbols_against_latest(
+    fresh_df: pd.DataFrame,
+    existing: dict[str, str],
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Diff freshly fetched+hashed symbol rows against current state.
+
+    Unlike diff_against_latest (per-ticker OHLCV, keyed on (symbol, date),
+    scoped to bound memory across a 100-ticker loop), this is a one-shot
+    whole-table comparison keyed on symbol alone -- symbols() returns every
+    row in one call, so there is no per-ticker loop to scope against.
+
+    Args:
+        fresh_df: Every row from this run's symbols()+eligible_scrips()
+            merge, already carrying a row_hash column (see
+            add_symbol_row_hashes).
+        existing: Mapping of symbol -> row_hash for the current
+            is_latest=True state, as returned by
+            bigquery_io.fetch_latest_symbol_hashes. Empty dict on the
+            first-ever run.
+
+    Returns:
+        Tuple of:
+        - rows_to_insert: subset of fresh_df that is new or changed vs.
+          existing.
+        - changed_keys: symbols that existed in `existing` with a
+          different hash -- superseded by a new row in rows_to_insert.
+        - delisted_keys: symbols present in `existing` but absent from
+          fresh_df entirely -- superseded with NO replacement row, since
+          the symbol no longer appears in PSX's current listing at all.
+    """
+    if fresh_df.empty:
+        return fresh_df, [], list(existing.keys())
+
+    symbols = fresh_df["symbol"].astype(str)
+    old_hashes = [existing.get(sym) for sym in symbols]
+
+    is_new = [h is None for h in old_hashes]
+    is_changed = [
+        h is not None and h != row_hash
+        for h, row_hash in zip(old_hashes, fresh_df["row_hash"])
+    ]
+    to_insert_mask = pd.Series(
+        [n or c for n, c in zip(is_new, is_changed)], index=fresh_df.index
+    )
+
+    rows_to_insert = fresh_df[to_insert_mask].reset_index(drop=True)
+    changed_keys = [sym for sym, changed in zip(symbols, is_changed) if changed]
+    delisted_keys = list(set(existing.keys()) - set(symbols.tolist()))
+    return rows_to_insert, changed_keys, delisted_keys

@@ -402,6 +402,10 @@ def load_sectors_rows(
     payload = df.copy()
     payload["snapshot_date"] = snapshot_date
     payload["loaded_at"] = now
+    optional_cols = ("advance", "decline", "unchanged", "turnover", "market_cap_b")
+    for optional_col in optional_cols:
+        if optional_col not in payload.columns:
+            payload[optional_col] = pd.NA
     payload = payload[[field.name for field in SECTORS_SCHEMA]]
 
     job_config = bigquery.LoadJobConfig(
@@ -432,6 +436,13 @@ def load_screener_rows(
     payload = df.copy()
     payload["snapshot_date"] = snapshot_date
     payload["loaded_at"] = now
+    optional_cols = (
+        "sector", "listed_in", "market_cap", "price", "pe_ratio",
+        "dividend_yield", "free_float", "volume_avg_30d", "change_1y_pct",
+    )
+    for optional_col in optional_cols:
+        if optional_col not in payload.columns:
+            payload[optional_col] = pd.NA
     payload = payload[[field.name for field in SCREENER_SCHEMA]]
 
     job_config = bigquery.LoadJobConfig(

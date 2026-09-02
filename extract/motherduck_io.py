@@ -20,6 +20,7 @@ STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
 SYMBOLS_TABLE = "symbols"
 SECTORS_TABLE = "sectors"
+SCREENER_TABLE = "screener"
 
 # Single source of truth for each table's raw-layer column order. Used both
 # to reindex the insert payload and to build an explicit named-column INSERT
@@ -48,6 +49,12 @@ _SYMBOLS_COLUMNS = (
 _SECTORS_COLUMNS = (
     "sector_code", "sector_name", "advance", "decline", "unchanged",
     "turnover", "market_cap_b", "snapshot_date", "loaded_at",
+)
+
+_SCREENER_COLUMNS = (
+    "symbol", "sector", "listed_in", "market_cap", "price", "pe_ratio",
+    "dividend_yield", "free_float", "volume_avg_30d", "change_1y_pct",
+    "snapshot_date", "loaded_at",
 )
 
 # loaded_at/superseded_at are TIMESTAMP WITH TIME ZONE (DuckDB's TIMESTAMPTZ),
@@ -121,6 +128,23 @@ _CREATE_SECTORS_SQL = f"""
     )
 """
 
+_CREATE_SCREENER_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {SCREENER_TABLE} (
+        symbol VARCHAR NOT NULL,
+        sector VARCHAR,
+        listed_in VARCHAR,
+        market_cap DOUBLE,
+        price DOUBLE,
+        pe_ratio DOUBLE,
+        dividend_yield DOUBLE,
+        free_float DOUBLE,
+        volume_avg_30d DOUBLE,
+        change_1y_pct DOUBLE,
+        snapshot_date DATE NOT NULL,
+        loaded_at TIMESTAMP WITH TIME ZONE NOT NULL
+    )
+"""
+
 
 @dataclass(frozen=True)
 class MotherDuckConfig:
@@ -177,6 +201,7 @@ def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> 
     client.execute(_CREATE_INDEX_CONSTITUENTS_SQL)
     client.execute(_CREATE_SYMBOLS_SQL)
     client.execute(_CREATE_SECTORS_SQL)
+    client.execute(_CREATE_SCREENER_SQL)
 
 
 def fetch_latest_hashes(
@@ -393,3 +418,30 @@ def load_sectors_rows(
         )
     finally:
         client.unregister("sectors_payload")
+
+
+def load_screener_rows(
+    client: duckdb.DuckDBPyConnection,
+    cfg: MotherDuckConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Insert one day's screener snapshot into screener. Always inserts."""
+    if df.empty:
+        return
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    payload = payload[list(_SCREENER_COLUMNS)]
+
+    client.register("screener_payload", payload)
+    try:
+        column_list = ", ".join(_SCREENER_COLUMNS)
+        client.execute(
+            f"INSERT INTO {SCREENER_TABLE} ({column_list}) "
+            f"SELECT {column_list} FROM screener_payload"
+        )
+    finally:
+        client.unregister("screener_payload")

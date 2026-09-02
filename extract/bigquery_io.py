@@ -20,6 +20,7 @@ STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
 SYMBOLS_TABLE = "symbols"
 SECTORS_TABLE = "sectors"
+SCREENER_TABLE = "screener"
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,21 @@ SECTORS_SCHEMA = [
     bigquery.SchemaField("unchanged", "INT64", mode="NULLABLE"),
     bigquery.SchemaField("turnover", "FLOAT64", mode="NULLABLE"),
     bigquery.SchemaField("market_cap_b", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("snapshot_date", "DATE", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+]
+
+SCREENER_SCHEMA = [
+    bigquery.SchemaField("symbol", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("listed_in", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("market_cap", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("price", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("pe_ratio", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("dividend_yield", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("free_float", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("volume_avg_30d", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("change_1y_pct", "FLOAT64", mode="NULLABLE"),
     bigquery.SchemaField("snapshot_date", "DATE", mode="REQUIRED"),
     bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
 ]
@@ -390,6 +406,36 @@ def load_sectors_rows(
 
     job_config = bigquery.LoadJobConfig(
         schema=SECTORS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+        time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()
+
+
+def load_screener_rows(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Batch-load one day's screener snapshot into raw.screener.
+
+    Always inserts (no dedup) -- price/market_cap/pe_ratio move daily.
+    """
+    if df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SCREENER_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    payload = payload[[field.name for field in SCREENER_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SCREENER_SCHEMA,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
         time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),

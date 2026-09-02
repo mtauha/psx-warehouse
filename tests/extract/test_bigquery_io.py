@@ -15,6 +15,7 @@ from extract.bigquery_io import (
     fetch_latest_hashes,
     fetch_latest_symbol_hashes,
     load_index_constituents,
+    load_screener_rows,
     load_sectors_rows,
     load_stock_history_rows,
     load_symbols_rows,
@@ -280,6 +281,30 @@ def test_load_sectors_rows_loads_with_snapshot_date() -> None:
     }])
 
     load_sectors_rows(client, _cfg(), df, date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    assert payload["snapshot_date"].iloc[0] == date(2026, 9, 2)
+
+
+def test_load_screener_rows_skips_empty_dataframe() -> None:
+    client = MagicMock()
+
+    load_screener_rows(client, _cfg(), pd.DataFrame(), date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_not_called()
+
+
+def test_load_screener_rows_loads_with_snapshot_date() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "sector": "14", "listed_in": "Main Board",
+        "market_cap": 1000.0, "price": 300.5, "pe_ratio": 8.2,
+        "dividend_yield": 5.1, "free_float": 45.0,
+        "volume_avg_30d": 200000.0, "change_1y_pct": 12.3,
+    }])
+
+    load_screener_rows(client, _cfg(), df, date(2026, 9, 2))
 
     client.load_table_from_dataframe.assert_called_once()
     payload = client.load_table_from_dataframe.call_args[0][0]

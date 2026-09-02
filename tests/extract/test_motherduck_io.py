@@ -14,6 +14,7 @@ import pytest
 
 from extract.config import ConfigError
 from extract.motherduck_io import (
+    SCREENER_TABLE,
     SECTORS_TABLE,
     STOCK_HISTORY_TABLE,
     SYMBOLS_TABLE,
@@ -24,6 +25,7 @@ from extract.motherduck_io import (
     get_client,
     load_config,
     load_index_constituents,
+    load_screener_rows,
     load_sectors_rows,
     load_stock_history_rows,
     load_symbols_rows,
@@ -83,7 +85,9 @@ def test_ensure_dataset_creates_both_tables(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents", "symbols", "sectors"}
+    assert tables == {
+        "stock_history", "index_constituents", "symbols", "sectors", "screener",
+    }
 
 
 def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
@@ -95,7 +99,9 @@ def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())  # must not raise on the second call
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents", "symbols", "sectors"}
+    assert tables == {
+        "stock_history", "index_constituents", "symbols", "sectors", "screener",
+    }
 
 
 def test_fetch_latest_hashes_returns_dict_for_is_latest_rows(tmp_path: Path) -> None:
@@ -446,3 +452,31 @@ def test_load_sectors_rows_inserts(tmp_path: Path) -> None:
 
     row = conn.execute(f"SELECT sector_code, snapshot_date FROM {SECTORS_TABLE}").fetchone()
     assert row == ("101", date(2026, 9, 2))
+
+
+def test_ensure_dataset_creates_screener_table(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+    assert "screener" in tables
+
+
+def test_load_screener_rows_inserts(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "sector": "14", "listed_in": "Main Board",
+        "market_cap": 1000.0, "price": 300.5, "pe_ratio": 8.2,
+        "dividend_yield": 5.1, "free_float": 45.0,
+        "volume_avg_30d": 200000.0, "change_1y_pct": 12.3,
+    }])
+
+    load_screener_rows(conn, _cfg(), df, date(2026, 9, 2))
+
+    row = conn.execute(f"SELECT symbol, snapshot_date FROM {SCREENER_TABLE}").fetchone()
+    assert row == ("ENGRO", date(2026, 9, 2))

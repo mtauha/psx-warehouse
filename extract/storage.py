@@ -63,6 +63,10 @@ class RawStorage(Protocol):
         self, client: Any, cfg: Any, df: pd.DataFrame, snapshot_date: date
     ) -> None: ...
 
+    def load_screener_rows(
+        self, client: Any, cfg: Any, df: pd.DataFrame, snapshot_date: date
+    ) -> None: ...
+
 
 if TYPE_CHECKING:
     # Static-only conformance checks: if either backend's function shapes

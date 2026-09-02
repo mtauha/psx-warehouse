@@ -59,6 +59,10 @@ class RawStorage(Protocol):
         run_started_at: datetime,
     ) -> None: ...
 
+    def load_sectors_rows(
+        self, client: Any, cfg: Any, df: pd.DataFrame, snapshot_date: date
+    ) -> None: ...
+
 
 if TYPE_CHECKING:
     # Static-only conformance checks: if either backend's function shapes

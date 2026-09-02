@@ -19,6 +19,7 @@ from extract.config import ConfigError
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
 SYMBOLS_TABLE = "symbols"
+SECTORS_TABLE = "sectors"
 
 # Single source of truth for each table's raw-layer column order. Used both
 # to reindex the insert payload and to build an explicit named-column INSERT
@@ -42,6 +43,11 @@ _SYMBOLS_COLUMNS = (
     "ticker_attr_id", "symbol", "name", "sector_name",
     "is_etf", "is_debt", "is_gem", "is_margin_eligible",
     "row_hash", "is_latest", "loaded_at", "superseded_at",
+)
+
+_SECTORS_COLUMNS = (
+    "sector_code", "sector_name", "advance", "decline", "unchanged",
+    "turnover", "market_cap_b", "snapshot_date", "loaded_at",
 )
 
 # loaded_at/superseded_at are TIMESTAMP WITH TIME ZONE (DuckDB's TIMESTAMPTZ),
@@ -101,6 +107,20 @@ _CREATE_SYMBOLS_SQL = f"""
     )
 """
 
+_CREATE_SECTORS_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {SECTORS_TABLE} (
+        sector_code VARCHAR NOT NULL,
+        sector_name VARCHAR NOT NULL,
+        advance BIGINT,
+        decline BIGINT,
+        unchanged BIGINT,
+        turnover DOUBLE,
+        market_cap_b DOUBLE,
+        snapshot_date DATE NOT NULL,
+        loaded_at TIMESTAMP WITH TIME ZONE NOT NULL
+    )
+"""
+
 
 @dataclass(frozen=True)
 class MotherDuckConfig:
@@ -156,6 +176,7 @@ def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> 
     client.execute(_CREATE_STOCK_HISTORY_SQL)
     client.execute(_CREATE_INDEX_CONSTITUENTS_SQL)
     client.execute(_CREATE_SYMBOLS_SQL)
+    client.execute(_CREATE_SECTORS_SQL)
 
 
 def fetch_latest_hashes(
@@ -345,3 +366,30 @@ def supersede_symbol_keys(
         """,
         [*keys, run_started_at],
     )
+
+
+def load_sectors_rows(
+    client: duckdb.DuckDBPyConnection,
+    cfg: MotherDuckConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Insert one day's sector summary into sectors. Always inserts."""
+    if df.empty:
+        return
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    payload = payload[list(_SECTORS_COLUMNS)]
+
+    client.register("sectors_payload", payload)
+    try:
+        column_list = ", ".join(_SECTORS_COLUMNS)
+        client.execute(
+            f"INSERT INTO {SECTORS_TABLE} ({column_list}) "
+            f"SELECT {column_list} FROM sectors_payload"
+        )
+    finally:
+        client.unregister("sectors_payload")

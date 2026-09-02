@@ -15,6 +15,7 @@ from extract.bigquery_io import (
     fetch_latest_hashes,
     fetch_latest_symbol_hashes,
     load_index_constituents,
+    load_sectors_rows,
     load_stock_history_rows,
     load_symbols_rows,
     supersede_stock_history_keys,
@@ -260,3 +261,26 @@ def test_supersede_symbol_keys_runs_update_with_params() -> None:
     params_by_name = {p.name: p for p in kwargs["job_config"].query_parameters}
     assert params_by_name["keys"].values == ["ENGRO", "DELISTEDCO"]
     assert params_by_name["run_started_at"].value == run_started_at
+
+
+def test_load_sectors_rows_skips_empty_dataframe() -> None:
+    client = MagicMock()
+
+    load_sectors_rows(client, _cfg(), pd.DataFrame(), date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_not_called()
+
+
+def test_load_sectors_rows_loads_with_snapshot_date() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{
+        "sector_code": "101", "sector_name": "Chemical",
+        "advance": 5, "decline": 2, "unchanged": 1,
+        "turnover": 123456.0, "market_cap_b": 789.0,
+    }])
+
+    load_sectors_rows(client, _cfg(), df, date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    assert payload["snapshot_date"].iloc[0] == date(2026, 9, 2)

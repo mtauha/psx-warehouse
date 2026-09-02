@@ -19,6 +19,7 @@ from extract.config import ConfigError
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
 SYMBOLS_TABLE = "symbols"
+SECTORS_TABLE = "sectors"
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,18 @@ SYMBOLS_SCHEMA = [
     bigquery.SchemaField("is_latest", "BOOL", mode="REQUIRED"),
     bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
     bigquery.SchemaField("superseded_at", "TIMESTAMP", mode="NULLABLE"),
+]
+
+SECTORS_SCHEMA = [
+    bigquery.SchemaField("sector_code", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector_name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("advance", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("decline", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("unchanged", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("turnover", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("market_cap_b", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("snapshot_date", "DATE", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
 ]
 
 
@@ -352,3 +365,34 @@ def supersede_symbol_keys(
         ]
     )
     client.query(query, job_config=job_config).result()
+
+
+def load_sectors_rows(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Batch-load one day's sector summary into raw.sectors.
+
+    Always inserts (no dedup) -- advance/decline/turnover/market_cap_b
+    move day to day, same reasoning as load_index_constituents.
+    """
+    if df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SECTORS_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    payload = payload[[field.name for field in SECTORS_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SECTORS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+        time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()

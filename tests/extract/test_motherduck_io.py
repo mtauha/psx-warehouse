@@ -14,6 +14,7 @@ import pytest
 
 from extract.config import ConfigError
 from extract.motherduck_io import (
+    SECTORS_TABLE,
     STOCK_HISTORY_TABLE,
     SYMBOLS_TABLE,
     MotherDuckConfig,
@@ -23,6 +24,7 @@ from extract.motherduck_io import (
     get_client,
     load_config,
     load_index_constituents,
+    load_sectors_rows,
     load_stock_history_rows,
     load_symbols_rows,
     supersede_stock_history_keys,
@@ -81,7 +83,7 @@ def test_ensure_dataset_creates_both_tables(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents", "symbols"}
+    assert tables == {"stock_history", "index_constituents", "symbols", "sectors"}
 
 
 def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
@@ -93,7 +95,7 @@ def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())  # must not raise on the second call
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents", "symbols"}
+    assert tables == {"stock_history", "index_constituents", "symbols", "sectors"}
 
 
 def test_fetch_latest_hashes_returns_dict_for_is_latest_rows(tmp_path: Path) -> None:
@@ -417,3 +419,30 @@ def test_supersede_symbol_keys_excludes_just_inserted_row(tmp_path: Path) -> Non
         f"SELECT row_hash FROM {SYMBOLS_TABLE} WHERE is_latest = TRUE"
     ).fetchall()
     assert remaining_latest == [("fresh-hash",)]
+
+
+def test_ensure_dataset_creates_sectors_table(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+    assert "sectors" in tables
+
+
+def test_load_sectors_rows_inserts(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{
+        "sector_code": "101", "sector_name": "Chemical",
+        "advance": 5, "decline": 2, "unchanged": 1,
+        "turnover": 123456.0, "market_cap_b": 789.0,
+    }])
+
+    load_sectors_rows(conn, _cfg(), df, date(2026, 9, 2))
+
+    row = conn.execute(f"SELECT sector_code, snapshot_date FROM {SECTORS_TABLE}").fetchone()
+    assert row == ("101", date(2026, 9, 2))

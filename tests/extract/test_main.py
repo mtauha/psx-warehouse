@@ -347,3 +347,50 @@ def test_run_continues_when_sectors_fetch_fails(mock_psxdata: MagicMock) -> None
     run(_cfg(), mock_storage, MagicMock())  # must not raise
 
     mock_storage.load_sectors_rows.assert_not_called()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_sectors_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """A sectors() payload missing a required column (e.g. sector_code)
+    raises KeyError at the reindex inside load_sectors_rows -- that must be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.load_sectors_rows.side_effect = KeyError("sector_code")
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_sectors_rows.assert_called_once()
+    mock_storage.load_screener_rows.assert_called_once()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_screener_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """A screener() payload missing a required column (e.g. symbol) raises
+    KeyError at the reindex inside load_screener_rows -- that must be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.load_screener_rows.side_effect = KeyError("symbol")
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_screener_rows.assert_called_once()
+    mock_storage.load_stock_history_rows.assert_called_once()

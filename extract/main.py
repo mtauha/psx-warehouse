@@ -164,6 +164,8 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
             logger.warning("sectors() returned no data, skipping raw.sectors this run")
     except PSXDataError as exc:
         logger.warning("Skipping raw.sectors this run: sectors() failed (%s)", exc)
+    except KeyError as exc:
+        logger.warning("Skipping raw.sectors this run: malformed sectors data (%s)", exc)
 
     try:
         screener_df = psxdata.screener(cache=False)
@@ -173,6 +175,8 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
             logger.warning("screener() returned no data, skipping raw.screener this run")
     except PSXDataError as exc:
         logger.warning("Skipping raw.screener this run: screener() failed (%s)", exc)
+    except KeyError as exc:
+        logger.warning("Skipping raw.screener this run: malformed screener data (%s)", exc)
 
     rows_to_insert_parts: list[pd.DataFrame] = []
     all_superseded_keys: list[tuple[str, str]] = []

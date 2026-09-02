@@ -384,3 +384,36 @@ def test_supersede_symbol_keys_flips_is_latest_and_respects_run_started_at(
     ).fetchone()
     assert row[0] is False
     assert row[1] is not None
+
+
+def test_supersede_symbol_keys_excludes_just_inserted_row(tmp_path: Path) -> None:
+    """Regression guard mirroring the BigQuery Critical bug fix: inserting a
+    changed row THEN superseding its key must flip only the prior row, not
+    the just-inserted replacement — both share symbol and is_latest=TRUE at
+    the moment supersede runs."""
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    run_started_at = datetime.now(timezone.utc)
+    # Prior run's row — loaded before this run started.
+    conn.execute(
+        "INSERT INTO symbols VALUES "
+        "('old-id', 'ENGRO', 'Engro Corporation', 'Chemical', FALSE, FALSE, "
+        "FALSE, TRUE, 'stale-hash', TRUE, ?, NULL)",
+        [run_started_at - timedelta(hours=1)],
+    )
+    # This run's replacement row for the same key — loaded_at >= run_started_at.
+    rows_df = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+        "is_margin_eligible": True, "row_hash": "fresh-hash",
+    }])
+    load_symbols_rows(conn, _cfg(), rows_df)
+
+    supersede_symbol_keys(conn, _cfg(), ["ENGRO"], run_started_at)
+
+    remaining_latest = conn.execute(
+        f"SELECT row_hash FROM {SYMBOLS_TABLE} WHERE is_latest = TRUE"
+    ).fetchall()
+    assert remaining_latest == [("fresh-hash",)]

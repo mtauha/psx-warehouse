@@ -287,6 +287,18 @@ def test_load_sectors_rows_loads_with_snapshot_date() -> None:
     assert payload["snapshot_date"].iloc[0] == date(2026, 9, 2)
 
 
+def test_load_sectors_rows_fills_missing_optional_columns() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{"sector_code": "101", "sector_name": "Chemical"}])
+
+    load_sectors_rows(client, _cfg(), df, date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    for optional_col in ("advance", "decline", "unchanged", "turnover", "market_cap_b"):
+        assert pd.isna(payload[optional_col].iloc[0])
+
+
 def test_load_screener_rows_skips_empty_dataframe() -> None:
     client = MagicMock()
 
@@ -309,3 +321,19 @@ def test_load_screener_rows_loads_with_snapshot_date() -> None:
     client.load_table_from_dataframe.assert_called_once()
     payload = client.load_table_from_dataframe.call_args[0][0]
     assert payload["snapshot_date"].iloc[0] == date(2026, 9, 2)
+
+
+def test_load_screener_rows_fills_missing_optional_columns() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{"symbol": "ENGRO"}])
+
+    load_screener_rows(client, _cfg(), df, date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    optional_cols = (
+        "sector", "listed_in", "market_cap", "price", "pe_ratio",
+        "dividend_yield", "free_float", "volume_avg_30d", "change_1y_pct",
+    )
+    for optional_col in optional_cols:
+        assert pd.isna(payload[optional_col].iloc[0])

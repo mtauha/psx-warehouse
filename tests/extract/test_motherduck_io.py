@@ -454,6 +454,28 @@ def test_load_sectors_rows_inserts(tmp_path: Path) -> None:
     assert row == ("101", date(2026, 9, 2))
 
 
+def test_load_sectors_rows_fills_missing_optional_columns(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{"sector_code": "101", "sector_name": "Chemical"}])
+
+    load_sectors_rows(conn, _cfg(), df, date(2026, 9, 2))
+
+    row = conn.execute(
+        "SELECT sector_code, sector_name, advance, decline, unchanged, "
+        f"turnover, market_cap_b FROM {SECTORS_TABLE}"
+    ).fetchone()
+    assert row[0] == "101"
+    assert row[1] == "Chemical"
+    assert row[2] is None
+    assert row[3] is None
+    assert row[4] is None
+    assert row[5] is None
+    assert row[6] is None
+
+
 def test_ensure_dataset_creates_screener_table(tmp_path: Path) -> None:
     import duckdb
 
@@ -480,3 +502,21 @@ def test_load_screener_rows_inserts(tmp_path: Path) -> None:
 
     row = conn.execute(f"SELECT symbol, snapshot_date FROM {SCREENER_TABLE}").fetchone()
     assert row == ("ENGRO", date(2026, 9, 2))
+
+
+def test_load_screener_rows_fills_missing_optional_columns(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{"symbol": "ENGRO"}])
+
+    load_screener_rows(conn, _cfg(), df, date(2026, 9, 2))
+
+    row = conn.execute(
+        "SELECT symbol, sector, listed_in, market_cap, price, pe_ratio, "
+        f"dividend_yield, free_float, volume_avg_30d, change_1y_pct FROM {SCREENER_TABLE}"
+    ).fetchone()
+    assert row[0] == "ENGRO"
+    for value in row[1:]:
+        assert value is None

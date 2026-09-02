@@ -100,7 +100,10 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
             fetched or come back empty, or if zero OHLCV rows are fetched
             across every ticker in the run. Storage write failures are not
             caught here — they propagate as uncaught exceptions, which is
-            the intended fail-loud behavior.
+            the intended fail-loud behavior — except for storage.load_
+            sectors_rows/load_screener_rows, whose narrow KeyError (a
+            malformed payload missing a required column) is caught so one
+            bad snapshot doesn't abort the rest of the run.
     """
     run_started_at = datetime.now(timezone.utc)
     client = storage.get_client(backend_cfg)

@@ -203,6 +203,24 @@ def test_diff_symbols_against_latest_delisted_symbol() -> None:
     assert delisted == ["DELISTEDCO"]
 
 
+def test_diff_symbols_against_latest_multiple_delisted_symbols() -> None:
+    fresh = add_symbol_row_hashes(pd.DataFrame([_symbol_row().to_dict()]))
+    old_hash = compute_symbol_row_hash(_symbol_row())
+
+    to_insert, changed, delisted = diff_symbols_against_latest(
+        fresh,
+        existing={
+            "ENGRO": old_hash,
+            "DELISTEDCO1": "some-other-hash",
+            "DELISTEDCO2": "yet-another-hash",
+        },
+    )
+
+    assert to_insert.empty
+    assert changed == []
+    assert sorted(delisted) == ["DELISTEDCO1", "DELISTEDCO2"]
+
+
 def test_diff_symbols_against_latest_empty_fresh_returns_all_as_delisted() -> None:
     empty = pd.DataFrame(columns=["symbol", "row_hash"])
 

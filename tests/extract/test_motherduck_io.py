@@ -427,6 +427,26 @@ def test_supersede_symbol_keys_excludes_just_inserted_row(tmp_path: Path) -> Non
     assert remaining_latest == [("fresh-hash",)]
 
 
+def test_supersede_symbol_keys_skips_empty_keys(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+        "is_margin_eligible": True, "row_hash": "h1",
+    }])
+    load_symbols_rows(conn, _cfg(), df)
+
+    supersede_symbol_keys(conn, _cfg(), [], datetime.now(timezone.utc))
+
+    row = conn.execute(
+        f"SELECT is_latest FROM {SYMBOLS_TABLE} WHERE symbol = 'ENGRO'"
+    ).fetchone()
+    assert row[0] is True
+
+
 def test_ensure_dataset_creates_sectors_table(tmp_path: Path) -> None:
     import duckdb
 
@@ -520,3 +540,14 @@ def test_load_screener_rows_fills_missing_optional_columns(tmp_path: Path) -> No
     assert row[0] == "ENGRO"
     for value in row[1:]:
         assert value is None
+
+
+def test_load_screener_rows_raises_on_missing_required_column(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{"sector": "14", "price": 300.5}])
+
+    with pytest.raises(KeyError):
+        load_screener_rows(conn, _cfg(), df, date(2026, 9, 2))

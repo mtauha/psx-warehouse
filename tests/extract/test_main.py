@@ -266,6 +266,7 @@ def test_run_continues_when_symbols_fetch_fails(mock_psxdata: MagicMock) -> None
     run(_cfg(), mock_storage, MagicMock())  # must not raise
 
     mock_storage.load_symbols_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
 
 
 @patch("extract.main.psxdata")
@@ -347,6 +348,7 @@ def test_run_continues_when_sectors_fetch_fails(mock_psxdata: MagicMock) -> None
     run(_cfg(), mock_storage, MagicMock())  # must not raise
 
     mock_storage.load_sectors_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
 
 
 @patch("extract.main.psxdata")

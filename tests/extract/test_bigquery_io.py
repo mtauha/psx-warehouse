@@ -258,6 +258,8 @@ def test_supersede_symbol_keys_runs_update_with_params() -> None:
     supersede_symbol_keys(client, _cfg(), ["ENGRO", "DELISTEDCO"], run_started_at)
 
     client.query.assert_called_once()
+    query_arg = client.query.call_args[0][0]
+    assert "loaded_at < @run_started_at" in query_arg
     _, kwargs = client.query.call_args
     params_by_name = {p.name: p for p in kwargs["job_config"].query_parameters}
     assert params_by_name["keys"].values == ["ENGRO", "DELISTEDCO"]
@@ -297,6 +299,14 @@ def test_load_sectors_rows_fills_missing_optional_columns() -> None:
     payload = client.load_table_from_dataframe.call_args[0][0]
     for optional_col in ("advance", "decline", "unchanged", "turnover", "market_cap_b"):
         assert pd.isna(payload[optional_col].iloc[0])
+
+
+def test_load_sectors_rows_raises_on_missing_required_column() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{"sector_name": "Chemical"}])
+
+    with pytest.raises(KeyError):
+        load_sectors_rows(client, _cfg(), df, date(2026, 9, 2))
 
 
 def test_load_screener_rows_skips_empty_dataframe() -> None:

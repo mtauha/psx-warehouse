@@ -189,13 +189,14 @@ def get_client(cfg: MotherDuckConfig) -> duckdb.DuckDBPyConnection:
 
 
 def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> None:
-    """Create both raw tables if they don't already exist.
+    """Create all five raw tables if they don't already exist.
 
     cfg is unused here (the database is already selected by the connection
     string in get_client()) — kept in the signature for RawStorage shape
     parity with bigquery_io.ensure_dataset. Unlike BigQuery's lazy
-    CREATE_IF_NEEDED on first load, both tables are created eagerly here, so
-    fetch_latest_hashes never needs to handle a missing-table case.
+    CREATE_IF_NEEDED on first load, all five tables (stock_history,
+    index_constituents, symbols, sectors, screener) are created eagerly
+    here, so fetch_latest_hashes never needs to handle a missing-table case.
     """
     client.execute(_CREATE_STOCK_HISTORY_SQL)
     client.execute(_CREATE_INDEX_CONSTITUENTS_SQL)
@@ -210,7 +211,7 @@ def fetch_latest_hashes(
     """Fetch (symbol, date) -> row_hash for one symbol's is_latest rows.
 
     No missing-table handling needed here (unlike bigquery_io's NotFound
-    catch) — ensure_dataset() always creates both tables eagerly before
+    catch) — ensure_dataset() always creates all five tables eagerly before
     this is ever called.
     """
     rows = client.execute(

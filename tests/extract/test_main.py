@@ -312,3 +312,38 @@ def test_run_continues_when_eligible_scrips_fetch_fails(mock_psxdata: MagicMock)
     mock_storage.load_symbols_rows.assert_called_once()
     loaded_df = mock_storage.load_symbols_rows.call_args[0][2]
     assert loaded_df.iloc[0]["is_margin_eligible"] == False  # noqa: E712
+
+
+@patch("extract.main.psxdata")
+def test_run_loads_sectors_and_screener(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())
+
+    mock_storage.load_sectors_rows.assert_called_once()
+    mock_storage.load_screener_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_sectors_fetch_fails(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.side_effect = PSXConnectionError("down")
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_sectors_rows.assert_not_called()

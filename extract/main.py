@@ -156,6 +156,24 @@ def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
                 client, backend_cfg, superseded_symbol_keys, run_started_at
             )
 
+    try:
+        sectors_df = psxdata.sectors(cache=False)
+        if not sectors_df.empty:
+            storage.load_sectors_rows(client, backend_cfg, sectors_df, today)
+        else:
+            logger.warning("sectors() returned no data, skipping raw.sectors this run")
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.sectors this run: sectors() failed (%s)", exc)
+
+    try:
+        screener_df = psxdata.screener(cache=False)
+        if not screener_df.empty:
+            storage.load_screener_rows(client, backend_cfg, screener_df, today)
+        else:
+            logger.warning("screener() returned no data, skipping raw.screener this run")
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.screener this run: screener() failed (%s)", exc)
+
     rows_to_insert_parts: list[pd.DataFrame] = []
     all_superseded_keys: list[tuple[str, str]] = []
     total_fetched_rows = 0

@@ -13,9 +13,12 @@ from extract.bigquery_io import (
     BigQueryConfig,
     ensure_dataset,
     fetch_latest_hashes,
+    fetch_latest_symbol_hashes,
     load_index_constituents,
     load_stock_history_rows,
+    load_symbols_rows,
     supersede_stock_history_keys,
+    supersede_symbol_keys,
 )
 from extract.bigquery_io import load_config as bq_load_config
 from extract.config import ConfigError
@@ -190,3 +193,70 @@ def test_load_index_constituents_adds_index_and_snapshot_columns() -> None:
     assert payload["index_name"].iloc[0] == "KSE100"
     assert payload["snapshot_date"].iloc[0] == date(2024, 1, 5)
     assert pd.isna(payload["shares_m"].iloc[0])
+
+
+def test_fetch_latest_symbol_hashes_builds_dict_from_query_result() -> None:
+    client = MagicMock()
+    client.query.return_value.result.return_value = [
+        {"symbol": "ENGRO", "row_hash": "h1"},
+        {"symbol": "LUCK", "row_hash": "h2"},
+    ]
+
+    result = fetch_latest_symbol_hashes(client, _cfg())
+
+    assert result == {"ENGRO": "h1", "LUCK": "h2"}
+
+
+def test_fetch_latest_symbol_hashes_returns_empty_dict_when_table_missing() -> None:
+    client = MagicMock()
+    client.query.side_effect = NotFound("no such table")
+
+    result = fetch_latest_symbol_hashes(client, _cfg())
+
+    assert result == {}
+
+
+def test_load_symbols_rows_skips_empty_dataframe() -> None:
+    client = MagicMock()
+
+    load_symbols_rows(client, _cfg(), pd.DataFrame())
+
+    client.load_table_from_dataframe.assert_not_called()
+
+
+def test_load_symbols_rows_loads_with_generated_columns() -> None:
+    client = MagicMock()
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+        "is_margin_eligible": True, "row_hash": "h1",
+    }])
+
+    load_symbols_rows(client, _cfg(), df)
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    assert payload["is_latest"].iloc[0] == True  # noqa: E712 -- numpy.bool_, not Python bool
+    assert payload["superseded_at"].iloc[0] is None
+    assert "ticker_attr_id" in payload.columns
+
+
+def test_supersede_symbol_keys_skips_empty_keys() -> None:
+    client = MagicMock()
+
+    supersede_symbol_keys(client, _cfg(), [], datetime.now(timezone.utc))
+
+    client.query.assert_not_called()
+
+
+def test_supersede_symbol_keys_runs_update_with_params() -> None:
+    client = MagicMock()
+    run_started_at = datetime.now(timezone.utc)
+
+    supersede_symbol_keys(client, _cfg(), ["ENGRO", "DELISTEDCO"], run_started_at)
+
+    client.query.assert_called_once()
+    _, kwargs = client.query.call_args
+    params_by_name = {p.name: p for p in kwargs["job_config"].query_parameters}
+    assert params_by_name["keys"].values == ["ENGRO", "DELISTEDCO"]
+    assert params_by_name["run_started_at"].value == run_started_at

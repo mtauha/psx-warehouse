@@ -18,6 +18,7 @@ from extract.config import ConfigError
 
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
+SYMBOLS_TABLE = "symbols"
 
 # Single source of truth for each table's raw-layer column order. Used both
 # to reindex the insert payload and to build an explicit named-column INSERT
@@ -35,6 +36,12 @@ _STOCK_HISTORY_COLUMNS = (
 _INDEX_CONSTITUENTS_COLUMNS = (
     "index_name", "symbol", "snapshot_date", "current_index", "idx_weight",
     "idx_point", "market_cap_m", "freefloat_m", "shares_m", "loaded_at",
+)
+
+_SYMBOLS_COLUMNS = (
+    "ticker_attr_id", "symbol", "name", "sector_name",
+    "is_etf", "is_debt", "is_gem", "is_margin_eligible",
+    "row_hash", "is_latest", "loaded_at", "superseded_at",
 )
 
 # loaded_at/superseded_at are TIMESTAMP WITH TIME ZONE (DuckDB's TIMESTAMPTZ),
@@ -74,6 +81,23 @@ _CREATE_INDEX_CONSTITUENTS_SQL = f"""
         freefloat_m DOUBLE,
         shares_m DOUBLE,
         loaded_at TIMESTAMP WITH TIME ZONE NOT NULL
+    )
+"""
+
+_CREATE_SYMBOLS_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {SYMBOLS_TABLE} (
+        ticker_attr_id VARCHAR NOT NULL,
+        symbol VARCHAR NOT NULL,
+        name VARCHAR NOT NULL,
+        sector_name VARCHAR NOT NULL,
+        is_etf BOOLEAN NOT NULL,
+        is_debt BOOLEAN NOT NULL,
+        is_gem BOOLEAN NOT NULL,
+        is_margin_eligible BOOLEAN NOT NULL,
+        row_hash VARCHAR NOT NULL,
+        is_latest BOOLEAN NOT NULL,
+        loaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        superseded_at TIMESTAMP WITH TIME ZONE
     )
 """
 
@@ -131,6 +155,7 @@ def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> 
     """
     client.execute(_CREATE_STOCK_HISTORY_SQL)
     client.execute(_CREATE_INDEX_CONSTITUENTS_SQL)
+    client.execute(_CREATE_SYMBOLS_SQL)
 
 
 def fetch_latest_hashes(
@@ -257,3 +282,66 @@ def load_index_constituents(
         )
     finally:
         client.unregister("index_constituents_payload")
+
+
+def fetch_latest_symbol_hashes(
+    client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig
+) -> dict[str, str]:
+    """Fetch symbol -> row_hash for all is_latest rows in symbols."""
+    rows = client.execute(
+        f"SELECT symbol, row_hash FROM {SYMBOLS_TABLE} WHERE is_latest = TRUE"
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def load_symbols_rows(
+    client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig, rows_df: pd.DataFrame
+) -> None:
+    """Insert new/changed ticker-attribute rows into symbols."""
+    if rows_df.empty:
+        return
+    now = datetime.now(timezone.utc)
+
+    payload = rows_df.copy()
+    payload["ticker_attr_id"] = [str(uuid.uuid4()) for _ in range(len(payload))]
+    payload["is_latest"] = True
+    payload["loaded_at"] = now
+    payload["superseded_at"] = None
+    payload = payload[list(_SYMBOLS_COLUMNS)]
+
+    client.register("symbols_payload", payload)
+    try:
+        column_list = ", ".join(_SYMBOLS_COLUMNS)
+        client.execute(
+            f"INSERT INTO {SYMBOLS_TABLE} ({column_list}) "
+            f"SELECT {column_list} FROM symbols_payload"
+        )
+    finally:
+        client.unregister("symbols_payload")
+
+
+def supersede_symbol_keys(
+    client: duckdb.DuckDBPyConnection,
+    cfg: MotherDuckConfig,
+    keys: list[str],
+    run_started_at: datetime,
+) -> None:
+    """Flip is_latest=FALSE and set superseded_at for the given symbols.
+
+    Same dual-purpose use (changed + delisted keys) as bigquery_io's
+    version -- see that function's docstring for why the loaded_at guard
+    is safe for both cases.
+    """
+    if not keys:
+        return
+    placeholders = ", ".join(["?"] * len(keys))
+    client.execute(
+        f"""
+        UPDATE {SYMBOLS_TABLE}
+        SET is_latest = FALSE, superseded_at = CURRENT_TIMESTAMP
+        WHERE is_latest = TRUE
+          AND symbol IN ({placeholders})
+          AND loaded_at < ?
+        """,
+        [*keys, run_started_at],
+    )

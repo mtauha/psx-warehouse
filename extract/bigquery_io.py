@@ -18,6 +18,7 @@ from extract.config import ConfigError
 
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
+SYMBOLS_TABLE = "symbols"
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,21 @@ INDEX_CONSTITUENTS_SCHEMA = [
     bigquery.SchemaField("freefloat_m", "FLOAT64", mode="NULLABLE"),
     bigquery.SchemaField("shares_m", "FLOAT64", mode="NULLABLE"),
     bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+]
+
+SYMBOLS_SCHEMA = [
+    bigquery.SchemaField("ticker_attr_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("symbol", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector_name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("is_etf", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_debt", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_gem", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_margin_eligible", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("row_hash", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("is_latest", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("superseded_at", "TIMESTAMP", mode="NULLABLE"),
 ]
 
 
@@ -257,3 +273,82 @@ def load_index_constituents(
     )
     job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
     job.result()
+
+
+def fetch_latest_symbol_hashes(client: bigquery.Client, cfg: BigQueryConfig) -> dict[str, str]:
+    """Fetch symbol -> row_hash for all is_latest rows in raw.symbols.
+
+    Whole-table, not scoped like fetch_latest_hashes -- symbols() itself
+    returns every row in one call, so there is no per-ticker loop to bound
+    memory against; the whole current-state table is at most ~1029 rows.
+    """
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    query = f"""
+        SELECT symbol, row_hash
+        FROM `{table_id}`
+        WHERE is_latest = TRUE
+    """
+    try:
+        rows = client.query(query).result()
+    except NotFound:
+        return {}
+    return {row["symbol"]: row["row_hash"] for row in rows}
+
+
+def load_symbols_rows(
+    client: bigquery.Client, cfg: BigQueryConfig, rows_df: pd.DataFrame
+) -> None:
+    """Batch-load new/changed ticker-attribute rows into raw.symbols."""
+    if rows_df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = rows_df.copy()
+    payload["ticker_attr_id"] = [str(uuid.uuid4()) for _ in range(len(payload))]
+    payload["is_latest"] = True
+    payload["loaded_at"] = now
+    payload["superseded_at"] = None
+    payload = payload[[field.name for field in SYMBOLS_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SYMBOLS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()
+
+
+def supersede_symbol_keys(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    keys: list[str],
+    run_started_at: datetime,
+) -> None:
+    """Flip is_latest=FALSE and set superseded_at for the given symbols.
+
+    Used for BOTH changed keys (a replacement row was just inserted by
+    load_symbols_rows) and delisted keys (no replacement row exists at
+    all) -- the loaded_at < @run_started_at guard is what makes this safe
+    for changed keys (excludes the just-inserted replacement, same
+    reasoning as supersede_stock_history_keys), and is trivially satisfied
+    for delisted keys since there is no new row to exclude.
+    """
+    if not keys:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    query = f"""
+        UPDATE `{table_id}`
+        SET is_latest = FALSE, superseded_at = CURRENT_TIMESTAMP()
+        WHERE is_latest = TRUE
+          AND symbol IN UNNEST(@keys)
+          AND loaded_at < @run_started_at
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("keys", "STRING", keys),
+            bigquery.ScalarQueryParameter("run_started_at", "TIMESTAMP", run_started_at),
+        ]
+    )
+    client.query(query, job_config=job_config).result()

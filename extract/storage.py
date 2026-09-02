@@ -47,6 +47,18 @@ class RawStorage(Protocol):
         snapshot_date: date,
     ) -> None: ...
 
+    def fetch_latest_symbol_hashes(self, client: Any, cfg: Any) -> dict[str, str]: ...
+
+    def load_symbols_rows(self, client: Any, cfg: Any, rows_df: pd.DataFrame) -> None: ...
+
+    def supersede_symbol_keys(
+        self,
+        client: Any,
+        cfg: Any,
+        keys: list[str],
+        run_started_at: datetime,
+    ) -> None: ...
+
 
 if TYPE_CHECKING:
     # Static-only conformance checks: if either backend's function shapes

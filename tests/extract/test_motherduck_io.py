@@ -15,14 +15,18 @@ import pytest
 from extract.config import ConfigError
 from extract.motherduck_io import (
     STOCK_HISTORY_TABLE,
+    SYMBOLS_TABLE,
     MotherDuckConfig,
     ensure_dataset,
     fetch_latest_hashes,
+    fetch_latest_symbol_hashes,
     get_client,
     load_config,
     load_index_constituents,
     load_stock_history_rows,
+    load_symbols_rows,
     supersede_stock_history_keys,
+    supersede_symbol_keys,
 )
 
 
@@ -77,7 +81,7 @@ def test_ensure_dataset_creates_both_tables(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents"}
+    assert tables == {"stock_history", "index_constituents", "symbols"}
 
 
 def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
@@ -89,7 +93,7 @@ def test_ensure_dataset_is_idempotent(tmp_path: Path) -> None:
     ensure_dataset(conn, _cfg())  # must not raise on the second call
 
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert tables == {"stock_history", "index_constituents"}
+    assert tables == {"stock_history", "index_constituents", "symbols"}
 
 
 def test_fetch_latest_hashes_returns_dict_for_is_latest_rows(tmp_path: Path) -> None:
@@ -318,3 +322,65 @@ def test_load_index_constituents_always_inserts_no_dedup(tmp_path: Path) -> None
 
     count = conn.execute("SELECT COUNT(*) FROM index_constituents").fetchone()[0]
     assert count == 2
+
+
+def test_ensure_dataset_creates_symbols_table(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+    assert "symbols" in tables
+
+
+def test_fetch_latest_symbol_hashes_empty_when_no_rows(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+
+    result = fetch_latest_symbol_hashes(conn, _cfg())
+
+    assert result == {}
+
+
+def test_load_and_fetch_symbols_roundtrip(tmp_path: Path) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+        "is_margin_eligible": True, "row_hash": "h1",
+    }])
+
+    load_symbols_rows(conn, _cfg(), df)
+    result = fetch_latest_symbol_hashes(conn, _cfg())
+
+    assert result == {"ENGRO": "h1"}
+
+
+def test_supersede_symbol_keys_flips_is_latest_and_respects_run_started_at(
+    tmp_path: Path,
+) -> None:
+    import duckdb
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    ensure_dataset(conn, _cfg())
+    df = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+        "is_margin_eligible": True, "row_hash": "h1",
+    }])
+    load_symbols_rows(conn, _cfg(), df)
+
+    new_run = datetime.now(timezone.utc)
+    supersede_symbol_keys(conn, _cfg(), ["ENGRO"], new_run)
+
+    row = conn.execute(
+        f"SELECT is_latest, superseded_at FROM {SYMBOLS_TABLE} WHERE symbol = 'ENGRO'"
+    ).fetchone()
+    assert row[0] is False
+    assert row[1] is not None

@@ -251,7 +251,7 @@ def test_load_index_constituents_noop_on_empty_dataframe(tmp_path: Path) -> None
 
     load_index_constituents(conn, _cfg(), pd.DataFrame(), "KSE100", date(2024, 1, 5))
 
-    count = conn.execute(f"SELECT COUNT(*) FROM index_constituents").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM index_constituents").fetchone()[0]
     assert count == 0
 
 

@@ -77,3 +77,23 @@ models:
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [index_name, symbol, snapshot_date]
+
+  - name: fact_sector_daily
+    columns:
+      - name: sector_code
+        tests: [not_null, relationships: {to: ref('dim_sectors'), field: sector_code}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: advance
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: decline
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: unchanged
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: turnover
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: market_cap_b
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [sector_code, date]

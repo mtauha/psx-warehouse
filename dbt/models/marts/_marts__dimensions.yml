@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: dim_sectors
+    columns:
+      - name: sector_code
+        tests: [not_null, unique]
+  - name: dim_indices
+    columns:
+      - name: index_name
+        tests: [not_null, unique]
+  - name: dim_date
+    columns:
+      - name: date
+        tests: [not_null, unique]

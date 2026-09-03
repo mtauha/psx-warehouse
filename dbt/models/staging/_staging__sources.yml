@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: "{{ env_var('RAW_BQ_DATASET', 'raw') }}"
+    tables:
+      - name: stock_history
+      - name: index_constituents
+      - name: symbols
+      - name: sectors
+      - name: screener

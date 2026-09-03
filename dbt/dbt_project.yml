@@ -5,6 +5,7 @@ config-version: 2
 profile: 'psx_warehouse'
 
 model-paths: ["models"]
+snapshot-paths: ["snapshots"]
 
 target-path: "target"
 clean-targets:

@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: stg_stock_history
+    columns:
+      - name: history_id
+        tests: [not_null, unique]
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+  - name: stg_index_constituents
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: index_name
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]
+  - name: stg_sectors
+    columns:
+      - name: sector_code
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]
+  - name: stg_screener
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]

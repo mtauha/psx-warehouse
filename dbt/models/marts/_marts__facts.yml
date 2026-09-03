@@ -46,8 +46,11 @@ models:
         # of its earliest row = whenever the snapshot first ran). Per this
         # task's plain-join design (no as_of_ticker_join fallback), any
         # snapshot_date in index_constituents older than that horizon has no
-        # possible match and legitimately lands NULL here. warn (not error)
-        # so the gap is visible without failing the build.
+        # possible match and legitimately lands NULL here. not_null is warn
+        # (not error) so the gap is visible without failing the build.
+        # relationships stays at default (error) severity - it already
+        # excludes NULL children, so it guards real FK violations among the
+        # matched rows without conflicting with the known NULL gap above.
         tests:
           - not_null:
               config:
@@ -55,8 +58,6 @@ models:
           - relationships:
               to: ref('dim_tickers')
               field: dbt_scd_id
-              config:
-                severity: warn
       - name: snapshot_date
         tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
       - name: idx_weight

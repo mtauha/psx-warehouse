@@ -97,3 +97,52 @@ models:
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [sector_code, date]
+
+  - name: fact_valuation_daily
+    columns:
+      - name: ticker_key
+        # Unlike fact_index_membership's gap (a temporal bootstrap-horizon
+        # effect from dim_tickers' snapshot only starting today), this NULL
+        # set is a symbol-coverage gap between two independent PSX endpoints:
+        # 108 of 745 stg_screener symbols (suffixed NC/XD/XB - non-convertible,
+        # ex-dividend, ex-bonus corporate-action variants) have zero rows in
+        # stg_symbols/dim_tickers at any date, so no as-of window could ever
+        # match them. not_null is warn (not error) so the gap is visible
+        # without failing the build. relationships stays at default (error)
+        # severity - it already excludes NULL children, so it guards real FK
+        # violations among the matched rows without conflicting with this
+        # known gap.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          - relationships:
+              to: ref('dim_tickers')
+              field: dbt_scd_id
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: market_cap
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: price
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: pe_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000
+              max_value: 1000
+              config: {severity: warn}
+      - name: dividend_yield
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config: {severity: warn}
+      - name: free_float
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config: {severity: warn}
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

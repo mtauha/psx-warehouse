@@ -1,0 +1,22 @@
+# Example dbt profiles.yml for the psx_warehouse project. Copy this to your
+# local ~/.dbt/profiles.yml (or dbt/profiles.yml with --profiles-dir dbt),
+# fill in real values, and never commit the real file — it's gitignored
+# because it can carry secrets (see .gitignore's "Secrets" section).
+#
+# dev  -> MotherDuck (dbt-duckdb), for local development.
+# prod -> BigQuery (dbt-bigquery), the real production target.
+
+psx_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "md:{{ env_var('MD_DATABASE') }}?motherduck_token={{ env_var('MOTHERDUCK_TOKEN') }}"
+      threads: 1
+
+    prod:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT') }}"
+      dataset: "{{ env_var('BQ_DATASET') }}"
+      threads: 4

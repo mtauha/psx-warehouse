@@ -5,15 +5,60 @@ get_client() and tests pass a mock instead of patching imports.
 """
 from __future__ import annotations
 
+import os
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
+from extract.config import ConfigError
+
 STOCK_HISTORY_TABLE = "stock_history"
 INDEX_CONSTITUENTS_TABLE = "index_constituents"
+SYMBOLS_TABLE = "symbols"
+SECTORS_TABLE = "sectors"
+SCREENER_TABLE = "screener"
+
+
+@dataclass(frozen=True)
+class BigQueryConfig:
+    """Resolved BigQuery-backend configuration."""
+
+    gcp_project: str
+    bq_dataset: str
+    bq_location: str
+
+
+def load_config() -> BigQueryConfig:
+    """Load BigQuery-backend configuration from environment variables.
+
+    Required:
+        GCP_PROJECT: GCP project ID.
+        BQ_DATASET: BigQuery dataset name (e.g. "raw").
+
+    Optional:
+        BQ_LOCATION: BigQuery dataset location, used only if the dataset
+            doesn't exist yet and needs to be created. Defaults to "US".
+
+    Raises:
+        ConfigError: If a required variable is missing.
+    """
+    gcp_project = os.environ.get("GCP_PROJECT", "").strip()
+    if not gcp_project:
+        raise ConfigError("GCP_PROJECT environment variable is required")
+
+    bq_dataset = os.environ.get("BQ_DATASET", "").strip()
+    if not bq_dataset:
+        raise ConfigError("BQ_DATASET environment variable is required")
+
+    bq_location = os.environ.get("BQ_LOCATION", "US").strip() or "US"
+
+    return BigQueryConfig(
+        gcp_project=gcp_project, bq_dataset=bq_dataset, bq_location=bq_location
+    )
 
 STOCK_HISTORY_SCHEMA = [
     bigquery.SchemaField("history_id", "STRING", mode="REQUIRED"),
@@ -44,27 +89,69 @@ INDEX_CONSTITUENTS_SCHEMA = [
     bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
 ]
 
+SYMBOLS_SCHEMA = [
+    bigquery.SchemaField("ticker_attr_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("symbol", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector_name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("is_etf", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_debt", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_gem", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("is_margin_eligible", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("row_hash", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("is_latest", "BOOL", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("superseded_at", "TIMESTAMP", mode="NULLABLE"),
+]
+
+SECTORS_SCHEMA = [
+    bigquery.SchemaField("sector_code", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector_name", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("advance", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("decline", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("unchanged", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("turnover", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("market_cap_b", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("snapshot_date", "DATE", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+]
+
+SCREENER_SCHEMA = [
+    bigquery.SchemaField("symbol", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sector", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("listed_in", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("market_cap", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("price", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("pe_ratio", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("dividend_yield", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("free_float", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("volume_avg_30d", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("change_1y_pct", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("snapshot_date", "DATE", mode="REQUIRED"),
+    bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
+]
+
 
 def _generate_table_id(project: str, dataset: str, table: str) -> str:
     """Helper function to create table id on the go"""
     return f"{project}.{dataset}.{table}"
 
 
-def get_client(project: str) -> bigquery.Client:
+def get_client(cfg: BigQueryConfig) -> bigquery.Client:
     """Create a BigQuery client using Application Default Credentials."""
-    return bigquery.Client(project=project)
+    return bigquery.Client(project=cfg.gcp_project)
 
 
-def ensure_dataset(client: bigquery.Client, project: str, dataset: str, location: str) -> None:
+def ensure_dataset(client: bigquery.Client, cfg: BigQueryConfig) -> None:
     """Create the raw dataset if it doesn't already exist."""
-    dataset_ref = bigquery.DatasetReference(project, dataset)
+    dataset_ref = bigquery.DatasetReference(cfg.gcp_project, cfg.bq_dataset)
     ds = bigquery.Dataset(dataset_ref)
-    ds.location = location
+    ds.location = cfg.bq_location
     client.create_dataset(ds, exists_ok=True)
 
 
 def fetch_latest_hashes(
-    client: bigquery.Client, project: str, dataset: str, symbol: str
+    client: bigquery.Client, cfg: BigQueryConfig, symbol: str
 ) -> dict[tuple[str, str], str]:
     """Fetch (symbol, date) -> row_hash for one symbol's is_latest rows.
 
@@ -76,7 +163,7 @@ def fetch_latest_hashes(
         Empty dict if raw.stock_history doesn't exist yet (first-ever run)
         or the symbol has no rows yet.
     """
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     query = f"""
         SELECT symbol, date, row_hash
         FROM `{table_id}`
@@ -96,7 +183,7 @@ def fetch_latest_hashes(
 
 
 def load_stock_history_rows(
-    client: bigquery.Client, project: str, dataset: str, rows_df: pd.DataFrame
+    client: bigquery.Client, cfg: BigQueryConfig, rows_df: pd.DataFrame
 ) -> None:
     """Batch-load new/changed OHLCV rows into raw.stock_history.
 
@@ -108,7 +195,7 @@ def load_stock_history_rows(
     """
     if rows_df.empty:
         return
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = rows_df.copy()
@@ -132,8 +219,7 @@ def load_stock_history_rows(
 
 def supersede_stock_history_keys(
     client: bigquery.Client,
-    project: str,
-    dataset: str,
+    cfg: BigQueryConfig,
     keys: list[tuple[str, str]],
     run_started_at: datetime,
 ) -> None:
@@ -159,7 +245,7 @@ def supersede_stock_history_keys(
     """
     if not keys:
         return
-    table_id = _generate_table_id(project, dataset, STOCK_HISTORY_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, STOCK_HISTORY_TABLE)
     composite_keys = [f"{symbol}|{date_str}" for symbol, date_str in keys]
     query = f"""
         UPDATE `{table_id}`
@@ -179,8 +265,7 @@ def supersede_stock_history_keys(
 
 def load_index_constituents(
     client: bigquery.Client,
-    project: str,
-    dataset: str,
+    cfg: BigQueryConfig,
     df: pd.DataFrame,
     index_name: str,
     snapshot_date: date,
@@ -193,7 +278,7 @@ def load_index_constituents(
     """
     if df.empty:
         return
-    table_id = _generate_table_id(project, dataset, INDEX_CONSTITUENTS_TABLE)
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, INDEX_CONSTITUENTS_TABLE)
     now = datetime.now(timezone.utc)
 
     payload = df.copy()
@@ -211,6 +296,157 @@ def load_index_constituents(
 
     job_config = bigquery.LoadJobConfig(
         schema=INDEX_CONSTITUENTS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+        time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()
+
+
+def fetch_latest_symbol_hashes(client: bigquery.Client, cfg: BigQueryConfig) -> dict[str, str]:
+    """Fetch symbol -> row_hash for all is_latest rows in raw.symbols.
+
+    Whole-table, not scoped like fetch_latest_hashes -- symbols() itself
+    returns every row in one call, so there is no per-ticker loop to bound
+    memory against; the whole current-state table is at most ~1029 rows.
+    """
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    query = f"""
+        SELECT symbol, row_hash
+        FROM `{table_id}`
+        WHERE is_latest = TRUE
+    """
+    try:
+        rows = client.query(query).result()
+    except NotFound:
+        return {}
+    return {row["symbol"]: row["row_hash"] for row in rows}
+
+
+def load_symbols_rows(
+    client: bigquery.Client, cfg: BigQueryConfig, rows_df: pd.DataFrame
+) -> None:
+    """Batch-load new/changed ticker-attribute rows into raw.symbols."""
+    if rows_df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = rows_df.copy()
+    payload["ticker_attr_id"] = [str(uuid.uuid4()) for _ in range(len(payload))]
+    payload["is_latest"] = True
+    payload["loaded_at"] = now
+    payload["superseded_at"] = None
+    payload = payload[[field.name for field in SYMBOLS_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SYMBOLS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()
+
+
+def supersede_symbol_keys(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    keys: list[str],
+    run_started_at: datetime,
+) -> None:
+    """Flip is_latest=FALSE and set superseded_at for the given symbols.
+
+    Used for BOTH changed keys (a replacement row was just inserted by
+    load_symbols_rows) and delisted keys (no replacement row exists at
+    all) -- the loaded_at < @run_started_at guard is what makes this safe
+    for changed keys (excludes the just-inserted replacement, same
+    reasoning as supersede_stock_history_keys), and is trivially satisfied
+    for delisted keys since there is no new row to exclude.
+    """
+    if not keys:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SYMBOLS_TABLE)
+    query = f"""
+        UPDATE `{table_id}`
+        SET is_latest = FALSE, superseded_at = CURRENT_TIMESTAMP()
+        WHERE is_latest = TRUE
+          AND symbol IN UNNEST(@keys)
+          AND loaded_at < @run_started_at
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("keys", "STRING", keys),
+            bigquery.ScalarQueryParameter("run_started_at", "TIMESTAMP", run_started_at),
+        ]
+    )
+    client.query(query, job_config=job_config).result()
+
+
+def load_sectors_rows(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Batch-load one day's sector summary into raw.sectors.
+
+    Always inserts (no dedup) -- advance/decline/turnover/market_cap_b
+    move day to day, same reasoning as load_index_constituents.
+    """
+    if df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SECTORS_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    optional_cols = ("advance", "decline", "unchanged", "turnover", "market_cap_b")
+    for optional_col in optional_cols:
+        if optional_col not in payload.columns:
+            payload[optional_col] = pd.NA
+    payload = payload[[field.name for field in SECTORS_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SECTORS_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+        time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),
+    )
+    job = client.load_table_from_dataframe(payload, table_id, job_config=job_config)
+    job.result()
+
+
+def load_screener_rows(
+    client: bigquery.Client,
+    cfg: BigQueryConfig,
+    df: pd.DataFrame,
+    snapshot_date: date,
+) -> None:
+    """Batch-load one day's screener snapshot into raw.screener.
+
+    Always inserts (no dedup) -- price/market_cap/pe_ratio move daily.
+    """
+    if df.empty:
+        return
+    table_id = _generate_table_id(cfg.gcp_project, cfg.bq_dataset, SCREENER_TABLE)
+    now = datetime.now(timezone.utc)
+
+    payload = df.copy()
+    payload["snapshot_date"] = snapshot_date
+    payload["loaded_at"] = now
+    optional_cols = (
+        "sector", "listed_in", "market_cap", "price", "pe_ratio",
+        "dividend_yield", "free_float", "volume_avg_30d", "change_1y_pct",
+    )
+    for optional_col in optional_cols:
+        if optional_col not in payload.columns:
+            payload[optional_col] = pd.NA
+    payload = payload[[field.name for field in SCREENER_SCHEMA]]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SCREENER_SCHEMA,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
         time_partitioning=bigquery.TimePartitioning(field="snapshot_date"),

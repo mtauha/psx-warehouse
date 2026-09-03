@@ -1,5 +1,7 @@
-"""Unit tests for extract.main orchestration. psxdata and bigquery_io are
-mocked at the module level — no live PSX or GCP access."""
+"""Unit tests for extract.main orchestration. psxdata is mocked at the
+module level; run()-level tests inject a mock storage object directly
+rather than patching a specific backend module — no live PSX or GCP
+access."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -8,17 +10,12 @@ import pandas as pd
 import pytest
 from psxdata.exceptions import PSXConnectionError
 
-from extract import config
-from extract.main import ExtractionFailed, main, run
+from extract import bigquery_io, config, motherduck_io
+from extract.main import ExtractionFailed, _get_storage, main, run
 
 
 def _cfg() -> config.Config:
-    return config.Config(
-        gcp_project="test-project",
-        bq_dataset="raw",
-        index_names=("KSE100",),
-        bq_location="US",
-    )
+    return config.Config(backend="bigquery", index_names=("KSE100",))
 
 
 def _constituents_df() -> pd.DataFrame:
@@ -33,80 +30,78 @@ def _history_df(close: float) -> pd.DataFrame:
     })
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
-def test_run_writes_batched_changes_once(mock_psxdata: MagicMock, mock_bq: MagicMock) -> None:
+def test_run_writes_batched_changes_once(mock_psxdata: MagicMock) -> None:
     mock_psxdata.indices.return_value = _constituents_df()
     mock_psxdata.stocks.side_effect = [_history_df(101.0), _history_df(102.0)]
-    mock_bq.fetch_latest_hashes.return_value = {}
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
 
-    run(_cfg())
+    run(_cfg(), mock_storage, MagicMock())
 
-    mock_bq.load_index_constituents.assert_called_once()
-    mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    mock_storage.load_index_constituents.assert_called_once()
+    mock_storage.load_stock_history_rows.assert_called_once()
+    written_df = mock_storage.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 2
     assert sorted(written_df["symbol"].tolist()) == ["ENGRO", "LUCK"]
-    mock_bq.supersede_stock_history_keys.assert_called_once()
+    mock_storage.supersede_stock_history_keys.assert_called_once()
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_skips_ticker_on_fetch_failure_and_continues(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     mock_psxdata.indices.return_value = _constituents_df()
     mock_psxdata.stocks.side_effect = [PSXConnectionError("down"), _history_df(102.0)]
-    mock_bq.fetch_latest_hashes.return_value = {}
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
 
-    run(_cfg())
+    run(_cfg(), mock_storage, MagicMock())
 
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    written_df = mock_storage.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "LUCK"
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_raises_when_constituents_fetch_fails(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     mock_psxdata.indices.side_effect = PSXConnectionError("down")
+    mock_storage = MagicMock()
 
     with pytest.raises(ExtractionFailed, match="constituents"):
-        run(_cfg())
+        run(_cfg(), mock_storage, MagicMock())
 
-    mock_bq.load_stock_history_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_not_called()
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_raises_when_constituents_empty(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     mock_psxdata.indices.return_value = pd.DataFrame()
 
     with pytest.raises(ExtractionFailed, match="no constituents"):
-        run(_cfg())
+        run(_cfg(), MagicMock(), MagicMock())
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_raises_when_zero_rows_fetched_across_all_tickers(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     mock_psxdata.indices.return_value = _constituents_df()
     mock_psxdata.stocks.return_value = pd.DataFrame()
-    mock_bq.fetch_latest_hashes.return_value = {}
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
 
     with pytest.raises(ExtractionFailed, match="Zero OHLCV"):
-        run(_cfg())
+        run(_cfg(), mock_storage, MagicMock())
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_writes_nothing_when_no_changes_detected(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     mock_psxdata.indices.return_value = _constituents_df()
     fresh = _history_df(101.0)
@@ -121,22 +116,22 @@ def test_run_writes_nothing_when_no_changes_detected(
         symbol: add_row_hashes(fresh.assign(symbol=symbol))["row_hash"].iloc[0]
         for symbol in ("ENGRO", "LUCK")
     }
-    mock_bq.fetch_latest_hashes.side_effect = (
-        lambda client, project, dataset, symbol: {
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.side_effect = (
+        lambda client, backend_cfg, symbol: {
             (symbol, "2024-01-05"): existing_hashes[symbol]
         }
     )
 
-    run(_cfg())
+    run(_cfg(), mock_storage, MagicMock())
 
-    mock_bq.load_stock_history_rows.assert_not_called()
-    mock_bq.supersede_stock_history_keys.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_not_called()
+    mock_storage.supersede_stock_history_keys.assert_not_called()
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_writes_changed_row_and_supersedes_its_key(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     """Regression guard for Finding 1: a CHANGED (not new) row must be both
     inserted (load_stock_history_rows) and superseded (supersede_stock_
@@ -145,29 +140,29 @@ def test_run_writes_changed_row_and_supersedes_its_key(
     mock_psxdata.indices.return_value = pd.DataFrame({"symbol": ["ENGRO"], "idx_weight": [5.0]})
     fresh = _history_df(101.0)
     mock_psxdata.stocks.return_value = fresh
-    mock_bq.fetch_latest_hashes.return_value = {
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {
         ("ENGRO", "2024-01-05"): "stale-hash-that-does-not-match"
     }
 
-    run(_cfg())
+    run(_cfg(), mock_storage, MagicMock())
 
-    mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    mock_storage.load_stock_history_rows.assert_called_once()
+    written_df = mock_storage.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "ENGRO"
 
-    mock_bq.supersede_stock_history_keys.assert_called_once()
-    call_args = mock_bq.supersede_stock_history_keys.call_args[0]
-    superseded_keys = call_args[3]
+    mock_storage.supersede_stock_history_keys.assert_called_once()
+    call_args = mock_storage.supersede_stock_history_keys.call_args[0]
+    superseded_keys = call_args[2]
     assert ("ENGRO", "2024-01-05") in superseded_keys
-    run_started_at = call_args[4]
+    run_started_at = call_args[3]
     assert run_started_at is not None
 
 
-@patch("extract.main.bigquery_io")
 @patch("extract.main.psxdata")
 def test_run_skips_ticker_with_malformed_row_and_continues(
-    mock_psxdata: MagicMock, mock_bq: MagicMock
+    mock_psxdata: MagicMock,
 ) -> None:
     """Finding 3: a malformed OHLCV row (None open price) raises TypeError
     inside compute_row_hash, which is not a PSXDataError. The run must not
@@ -180,14 +175,28 @@ def test_run_skips_ticker_with_malformed_row_and_continues(
         "volume": [1000], "is_anomaly": [False],
     })
     mock_psxdata.stocks.side_effect = [malformed_df, _history_df(102.0)]
-    mock_bq.fetch_latest_hashes.return_value = {}
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
 
-    run(_cfg())
+    run(_cfg(), mock_storage, MagicMock())
 
-    mock_bq.load_stock_history_rows.assert_called_once()
-    written_df = mock_bq.load_stock_history_rows.call_args[0][3]
+    mock_storage.load_stock_history_rows.assert_called_once()
+    written_df = mock_storage.load_stock_history_rows.call_args[0][2]
     assert len(written_df) == 1
     assert written_df["symbol"].iloc[0] == "LUCK"
+
+
+def test_get_storage_selects_bigquery() -> None:
+    assert _get_storage("bigquery") is bigquery_io
+
+
+def test_get_storage_selects_motherduck() -> None:
+    assert _get_storage("motherduck") is motherduck_io
+
+
+def test_get_storage_raises_on_unknown_backend() -> None:
+    with pytest.raises(ExtractionFailed, match="snowflake"):
+        _get_storage("snowflake")
 
 
 @patch("extract.main.config.load_config", side_effect=config.ConfigError("GCP_PROJECT missing"))
@@ -195,18 +204,195 @@ def test_main_returns_1_on_config_error(mock_load_config: MagicMock) -> None:
     assert main() == 1
 
 
+@patch("extract.main.bigquery_io")
 @patch(
     "extract.main.run",
     side_effect=ExtractionFailed("Zero OHLCV rows fetched across all tickers"),
 )
 @patch("extract.main.config.load_config", return_value=_cfg())
 def test_main_returns_1_on_extraction_failed(
-    mock_load_config: MagicMock, mock_run: MagicMock
+    mock_load_config: MagicMock, mock_run: MagicMock, mock_bigquery_io: MagicMock
 ) -> None:
     assert main() == 1
 
 
+@patch("extract.main.bigquery_io")
 @patch("extract.main.run")
 @patch("extract.main.config.load_config", return_value=_cfg())
-def test_main_returns_0_on_success(mock_load_config: MagicMock, mock_run: MagicMock) -> None:
+def test_main_returns_0_on_success(
+    mock_load_config: MagicMock, mock_run: MagicMock, mock_bigquery_io: MagicMock
+) -> None:
     assert main() == 0
+
+
+@patch("extract.main.psxdata")
+def test_run_loads_new_symbols_and_supersedes_delisted(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+    }])
+    mock_psxdata.eligible_scrips.return_value = {
+        "table_0": pd.DataFrame([{"symbol": "ENGRO", "name": "Engro Corporation"}])
+    }
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.fetch_latest_symbol_hashes.return_value = {"DELISTEDCO": "old-hash"}
+
+    run(_cfg(), mock_storage, MagicMock())
+
+    mock_storage.load_symbols_rows.assert_called_once()
+    loaded_df = mock_storage.load_symbols_rows.call_args[0][2]
+    assert loaded_df.iloc[0]["is_margin_eligible"] == True  # noqa: E712
+
+    mock_storage.supersede_symbol_keys.assert_called_once()
+    superseded_keys = mock_storage.supersede_symbol_keys.call_args[0][2]
+    assert "DELISTEDCO" in superseded_keys
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_symbols_fetch_fails(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.side_effect = PSXConnectionError("down")
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_symbols_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """Everything after the symbols() fetch (isin filter, row hashing) must
+    be guarded too -- a malformed payload (missing columns) should be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{"symbol": "ENGRO"}])
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_eligible_scrips_fetch_fails(mock_psxdata: MagicMock) -> None:
+    """Regression guard from independent review: eligible_scrips() failing
+    must not crash the whole run -- symbols() itself succeeded, so
+    raw.symbols should still get written, just with is_margin_eligible
+    defaulting to False for everyone this run."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame([{
+        "symbol": "ENGRO", "name": "Engro Corporation", "sector_name": "Chemical",
+        "is_etf": False, "is_debt": False, "is_gem": False,
+    }])
+    mock_psxdata.eligible_scrips.side_effect = PSXConnectionError("down")
+    mock_psxdata.sectors.return_value = pd.DataFrame()
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.fetch_latest_symbol_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_symbols_rows.assert_called_once()
+    loaded_df = mock_storage.load_symbols_rows.call_args[0][2]
+    assert loaded_df.iloc[0]["is_margin_eligible"] == False  # noqa: E712
+
+
+@patch("extract.main.psxdata")
+def test_run_loads_sectors_and_screener(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())
+
+    mock_storage.load_sectors_rows.assert_called_once()
+    mock_storage.load_screener_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_sectors_fetch_fails(mock_psxdata: MagicMock) -> None:
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.side_effect = PSXConnectionError("down")
+    mock_psxdata.screener.return_value = pd.DataFrame()
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_sectors_rows.assert_not_called()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_sectors_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """A sectors() payload missing a required column (e.g. sector_code)
+    raises KeyError at the reindex inside load_sectors_rows -- that must be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.load_sectors_rows.side_effect = KeyError("sector_code")
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_sectors_rows.assert_called_once()
+    mock_storage.load_screener_rows.assert_called_once()
+    mock_storage.load_stock_history_rows.assert_called_once()
+
+
+@patch("extract.main.psxdata")
+def test_run_continues_when_screener_payload_is_malformed(mock_psxdata: MagicMock) -> None:
+    """A screener() payload missing a required column (e.g. symbol) raises
+    KeyError at the reindex inside load_screener_rows -- that must be
+    skipped, not crash the whole run before the OHLCV loop even starts."""
+    mock_psxdata.indices.return_value = _constituents_df()
+    mock_psxdata.stocks.return_value = _history_df(101.0)
+    mock_psxdata.symbols.return_value = pd.DataFrame()
+    mock_psxdata.eligible_scrips.return_value = {}
+    mock_psxdata.sectors.return_value = pd.DataFrame(
+        [{"sector_code": "14", "sector_name": "Chemical"}]
+    )
+    mock_psxdata.screener.return_value = pd.DataFrame([{"symbol": "ENGRO", "price": 300.5}])
+    mock_storage = MagicMock()
+    mock_storage.fetch_latest_hashes.return_value = {}
+    mock_storage.load_screener_rows.side_effect = KeyError("symbol")
+
+    run(_cfg(), mock_storage, MagicMock())  # must not raise
+
+    mock_storage.load_screener_rows.assert_called_once()
+    mock_storage.load_stock_history_rows.assert_called_once()

@@ -11,13 +11,20 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import date, datetime, timezone
+from typing import Any, Protocol
 
 import pandas as pd
 import psxdata
 from psxdata.exceptions import PSXDataError
 
-from extract import bigquery_io, config
-from extract.diff import add_row_hashes, diff_against_latest
+from extract import bigquery_io, config, motherduck_io
+from extract.diff import (
+    add_row_hashes,
+    add_symbol_row_hashes,
+    diff_against_latest,
+    diff_symbols_against_latest,
+)
+from extract.storage import RawStorage
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +33,81 @@ class ExtractionFailed(Exception):
     """Raised for conditions that should exit the job non-zero."""
 
 
-def run(cfg: config.Config) -> None:
+def _fetch_margin_eligible_symbols() -> set[str]:
+    """Union of symbols appearing in any of eligible_scrips()'s 9 category
+    tables. Category labels (table_0..table_8) are fallback positional
+    keys, not real names (see psxdata's own scraper docstring) -- only
+    presence across the union is meaningful, not which table a symbol is in.
+
+    Returns an empty set (not a raised exception) if eligible_scrips()
+    itself fails -- found by independent review: an earlier draft left
+    this call unguarded, so a PSXDataError here would propagate all the
+    way out of run() uncaught (main() only catches ConfigError and
+    ExtractionFailed), crashing the whole process before the OHLCV loop
+    even starts, contradicting this function's own intended "non-fatal"
+    design. An empty set here just means every symbol gets
+    is_margin_eligible=False for this run -- self-healing, since the next
+    run's fresh eligible_scrips() call retries independently.
+    """
+    try:
+        tables = psxdata.eligible_scrips(cache=False)
+    except PSXDataError as exc:
+        logger.warning(
+            "eligible_scrips() failed, is_margin_eligible defaults to False this run: %s",
+            exc,
+        )
+        return set()
+    symbols: set[str] = set()
+    for df in tables.values():
+        if not df.empty and "symbol" in df.columns:
+            symbols.update(df["symbol"].astype(str).tolist())
+    return symbols
+
+
+class _StorageModule(RawStorage, Protocol):
+    """RawStorage plus the one extra method main() needs before run().
+
+    load_config() is deliberately not part of RawStorage itself
+    (extract/storage.py): each backend owns its own concrete config type,
+    so the shared Protocol can't declare a single return type for it. This
+    narrower local Protocol adds just that one method for main()'s use,
+    without touching RawStorage or run()'s signature — a module satisfying
+    _StorageModule still structurally satisfies RawStorage everywhere else.
+    """
+
+    def load_config(self) -> Any: ...
+
+
+def _get_storage(backend: str) -> _StorageModule:
+    """Resolve a backend name to its storage module.
+
+    Deliberately the only place in extract/ that knows which backend names
+    exist — config.py stays backend-agnostic so adding a backend never
+    requires editing it.
+    """
+    if backend == "motherduck":
+        return motherduck_io
+    if backend == "bigquery":
+        return bigquery_io
+    raise ExtractionFailed(f"Unsupported BACKEND: {backend!r}")
+
+
+def run(cfg: config.Config, storage: RawStorage, backend_cfg: Any) -> None:
     """Execute one extraction run against the given configuration.
 
     Raises:
         ExtractionFailed: If a configured index's constituents can't be
             fetched or come back empty, or if zero OHLCV rows are fetched
-            across every ticker in the run. BigQuery write failures are
-            not caught here — they propagate as uncaught exceptions,
-            which is the intended fail-loud behavior.
+            across every ticker in the run. Storage write failures are not
+            caught here — they propagate as uncaught exceptions, which is
+            the intended fail-loud behavior — except for storage.load_
+            sectors_rows/load_screener_rows, whose narrow KeyError (a
+            malformed payload missing a required column) is caught so one
+            bad snapshot doesn't abort the rest of the run.
     """
     run_started_at = datetime.now(timezone.utc)
-    client = bigquery_io.get_client(cfg.gcp_project)
-    bigquery_io.ensure_dataset(client, cfg.gcp_project, cfg.bq_dataset, cfg.bq_location)
+    client = storage.get_client(backend_cfg)
+    storage.ensure_dataset(client, backend_cfg)
 
     today = date.today()
     all_symbols: set[str] = set()
@@ -54,10 +123,63 @@ def run(cfg: config.Config) -> None:
         if constituents_df.empty:
             raise ExtractionFailed(f"Index {index_name} returned no constituents")
 
-        bigquery_io.load_index_constituents(
-            client, cfg.gcp_project, cfg.bq_dataset, constituents_df, index_name, today
+        storage.load_index_constituents(
+            client, backend_cfg, constituents_df, index_name, today
         )
         all_symbols.update(constituents_df["symbol"].tolist())
+
+    try:
+        symbols_df = psxdata.symbols(cache=False)
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.symbols this run: symbols() failed (%s)", exc)
+        symbols_df = pd.DataFrame()
+
+    if not symbols_df.empty:
+        try:
+            margin_eligible = _fetch_margin_eligible_symbols()
+            symbols_df = symbols_df.copy()
+            symbols_df["is_margin_eligible"] = symbols_df["symbol"].isin(margin_eligible)
+            hashed_symbols_df = add_symbol_row_hashes(symbols_df)
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.warning(
+                "Skipping raw.symbols this run: malformed symbol data (%s)", exc
+            )
+            hashed_symbols_df = pd.DataFrame()
+
+        if not hashed_symbols_df.empty:
+            existing_symbols = storage.fetch_latest_symbol_hashes(client, backend_cfg)
+            symbols_to_insert, changed_symbol_keys, delisted_symbol_keys = (
+                diff_symbols_against_latest(hashed_symbols_df, existing_symbols)
+            )
+
+            if not symbols_to_insert.empty:
+                storage.load_symbols_rows(client, backend_cfg, symbols_to_insert)
+            superseded_symbol_keys = changed_symbol_keys + delisted_symbol_keys
+            storage.supersede_symbol_keys(
+                client, backend_cfg, superseded_symbol_keys, run_started_at
+            )
+
+    try:
+        sectors_df = psxdata.sectors(cache=False)
+        if not sectors_df.empty:
+            storage.load_sectors_rows(client, backend_cfg, sectors_df, today)
+        else:
+            logger.warning("sectors() returned no data, skipping raw.sectors this run")
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.sectors this run: sectors() failed (%s)", exc)
+    except KeyError as exc:
+        logger.warning("Skipping raw.sectors this run: malformed sectors data (%s)", exc)
+
+    try:
+        screener_df = psxdata.screener(cache=False)
+        if not screener_df.empty:
+            storage.load_screener_rows(client, backend_cfg, screener_df, today)
+        else:
+            logger.warning("screener() returned no data, skipping raw.screener this run")
+    except PSXDataError as exc:
+        logger.warning("Skipping raw.screener this run: screener() failed (%s)", exc)
+    except KeyError as exc:
+        logger.warning("Skipping raw.screener this run: malformed screener data (%s)", exc)
 
     rows_to_insert_parts: list[pd.DataFrame] = []
     all_superseded_keys: list[tuple[str, str]] = []
@@ -84,9 +206,7 @@ def run(cfg: config.Config) -> None:
             logger.warning("Skipping %s: malformed row data (%s)", symbol, exc)
             continue
 
-        existing = bigquery_io.fetch_latest_hashes(
-            client, cfg.gcp_project, cfg.bq_dataset, symbol
-        )
+        existing = storage.fetch_latest_hashes(client, backend_cfg, symbol)
         rows_to_insert, superseded_keys = diff_against_latest(hashed_df, existing)
 
         if not rows_to_insert.empty:
@@ -98,11 +218,9 @@ def run(cfg: config.Config) -> None:
 
     if rows_to_insert_parts:
         all_rows_to_insert = pd.concat(rows_to_insert_parts, ignore_index=True)
-        bigquery_io.load_stock_history_rows(
-            client, cfg.gcp_project, cfg.bq_dataset, all_rows_to_insert
-        )
-        bigquery_io.supersede_stock_history_keys(
-            client, cfg.gcp_project, cfg.bq_dataset, all_superseded_keys, run_started_at
+        storage.load_stock_history_rows(client, backend_cfg, all_rows_to_insert)
+        storage.supersede_stock_history_keys(
+            client, backend_cfg, all_superseded_keys, run_started_at
         )
         logger.info("Extraction complete: %d rows written", len(all_rows_to_insert))
     else:
@@ -116,7 +234,9 @@ def main() -> int:
     )
     try:
         cfg = config.load_config()
-        run(cfg)
+        storage = _get_storage(cfg.backend)
+        backend_cfg = storage.load_config()
+        run(cfg, storage, backend_cfg)
     except (config.ConfigError, ExtractionFailed) as exc:
         logger.error(str(exc))
         return 1

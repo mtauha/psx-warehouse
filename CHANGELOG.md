@@ -13,3 +13,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Repository scaffolding: Python/dbt project structure, CI (lint + dbt
   parse), GitHub issue/PR templates, dependabot, branch protection on `main`.
+- Raw-layer extraction for three new tables, on both BigQuery and
+  MotherDuck backends: `raw.symbols` (ticker attributes, hash-diffed so
+  unchanged rows aren't rewritten, with delisting detection when a
+  symbol drops out of a fresh fetch), `raw.sectors` (daily sector
+  summary), and `raw.screener` (daily valuation/fundamentals snapshot).

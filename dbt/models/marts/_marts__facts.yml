@@ -36,3 +36,43 @@ models:
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [symbol, date]
+
+  - name: fact_index_membership
+    columns:
+      - name: index_name
+        tests: [not_null, relationships: {to: ref('dim_indices'), field: index_name}]
+      - name: ticker_key
+        # dim_tickers is a snapshot with a bootstrap horizon (dbt_valid_from
+        # of its earliest row = whenever the snapshot first ran). Per this
+        # task's plain-join design (no as_of_ticker_join fallback), any
+        # snapshot_date in index_constituents older than that horizon has no
+        # possible match and legitimately lands NULL here. warn (not error)
+        # so the gap is visible without failing the build.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          - relationships:
+              to: ref('dim_tickers')
+              field: dbt_scd_id
+              config:
+                severity: warn
+      - name: snapshot_date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: idx_weight
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: idx_point
+        # IDX POINT is each stock's signed point-contribution to the index's
+        # move (can be negative), not an index level - no non-negativity
+        # constraint applies.
+      - name: market_cap_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: freefloat_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: shares_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: current_index
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [index_name, symbol, snapshot_date]

@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: fact_ohlcv
+    columns:
+      - name: ticker_key
+        tests: [not_null, relationships: {to: ref('dim_tickers'), field: dbt_scd_id}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: is_ticker_attrs_assumed
+        tests: [not_null]
+      - name: open
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: high
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: low
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: close
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: volume
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

@@ -6,7 +6,10 @@ snapshots:
       # sector_code is null for real PSX symbols the sectors() extraction doesn't cover today
       # (debt instruments like BILLS AND BONDS, and a handful with no sector assigned at source);
       # the same known, bounded data gap as stg_symbols.sector_code (Task 3), flowing through
-      # unchanged from stg_symbols where is_latest = true, so this stays a warning, not a hard failure.
+      # unchanged from stg_symbols where is_latest = true, so not_null stays a warning, not a hard
+      # failure. relationships is left at default (error) severity: it filters out NULLs before
+      # comparing, so this known gap never triggers it — it stays armed as a real FK-integrity
+      # guard against any future broken sector_code match.
       - name: sector_code
         tests:
           - not_null:
@@ -15,8 +18,6 @@ snapshots:
           - relationships:
               to: ref('dim_sectors')
               field: sector_code
-              config:
-                severity: warn
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [symbol, dbt_valid_from]

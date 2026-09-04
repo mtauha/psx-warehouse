@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: stg_stock_history
+    columns:
+      - name: history_id
+        tests: [not_null, unique]
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+  - name: stg_index_constituents
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: index_name
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]
+  - name: stg_sectors
+    columns:
+      - name: sector_code
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]
+  - name: stg_screener
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: snapshot_date
+        tests: [not_null]
+  - name: stg_symbols
+    columns:
+      - name: symbol
+        tests: [not_null]
+      # sector_code is null for real PSX symbols the sectors() extraction doesn't cover today
+      # (debt instruments like BILLS AND BONDS, and a handful with no sector assigned at source);
+      # a known, bounded data gap rather than a join defect, so this stays a warning, not a hard failure.
+      - name: sector_code
+        tests:
+          - not_null:
+              config:
+                severity: warn

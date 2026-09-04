@@ -56,6 +56,9 @@ jobs:
           enable-cache: true
       - name: Install dbt
         run: uv pip install --system dbt-core dbt-bigquery
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
       - name: Write stub profiles.yml
         run: |
           mkdir -p ~/.dbt

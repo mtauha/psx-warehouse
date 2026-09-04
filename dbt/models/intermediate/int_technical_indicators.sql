@@ -15,7 +15,7 @@ with base as (
     from {{ ref('stg_stock_history') }}
     where is_latest = true
     {% if is_incremental() %}
-    and date >= current_date - interval '500' day
+    and date >= {{ dbt.dateadd('day', -500, 'current_date') }}
     {% endif %}
 
 ),
@@ -118,5 +118,5 @@ final as (
 select *
 from final
 {% if is_incremental() %}
-where date >= current_date - interval '250' day
+where date >= {{ dbt.dateadd('day', -250, 'current_date') }}
 {% endif %}

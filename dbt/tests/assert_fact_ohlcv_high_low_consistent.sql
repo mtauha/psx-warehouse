@@ -4,5 +4,5 @@
 -- issue. This test guards against unflagged/new violations only.
 select *
 from {{ ref('fact_ohlcv') }}
-where is_anomaly = false
+where not coalesce(is_anomaly, false)
   and not (high >= low and high >= open and high >= close and low <= open and low <= close)

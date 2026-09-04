@@ -3,6 +3,13 @@ version: 2
 snapshots:
   - name: dim_tickers
     columns:
+      # dbt_scd_id is the parent key every fact's relationships test points at
+      # (ticker_key); guard its own uniqueness so a broken FK reference on any
+      # fact can be traced back to a real dim_tickers problem, not a false
+      # positive from a non-unique parent key.
+      - name: dbt_scd_id
+        tests:
+          - unique
       # sector_code is null for real PSX symbols the sectors() extraction doesn't cover today
       # (debt instruments like BILLS AND BONDS, and a handful with no sector assigned at source);
       # the same known, bounded data gap as stg_symbols.sector_code (Task 3), flowing through

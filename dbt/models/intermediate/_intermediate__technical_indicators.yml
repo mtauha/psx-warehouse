@@ -28,6 +28,10 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+      - name: bollinger_upper
+        tests: [not_null]
+      - name: bollinger_lower
+        tests: [not_null]
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [symbol, date]

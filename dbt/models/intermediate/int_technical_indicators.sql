@@ -20,6 +20,61 @@ with base as (
 
 ),
 
+ema_base as (
+
+    select
+        symbol,
+        date,
+        close,
+        {{ truncated_ema('close', '2.0/13', 90) }} as ema_12,
+        {{ truncated_ema('close', '2.0/27', 90) }} as ema_26
+    from base
+
+),
+
+macd_line_calc as (
+
+    select
+        symbol,
+        date,
+        ema_12 - ema_26 as macd_line
+    from ema_base
+
+),
+
+macd_signal_calc as (
+
+    select
+        symbol,
+        date,
+        macd_line,
+        {{ truncated_ema('macd_line', '0.2', 90) }} as macd_signal
+    from macd_line_calc
+
+),
+
+bollinger as (
+
+    select
+        symbol,
+        date,
+        avg(close) over (
+            partition by symbol order by date rows between 19 preceding and current row
+        ) as bollinger_mid,
+        avg(close) over (
+            partition by symbol order by date rows between 19 preceding and current row
+        ) + 2 * stddev(close) over (
+            partition by symbol order by date rows between 19 preceding and current row
+        ) as bollinger_upper,
+        avg(close) over (
+            partition by symbol order by date rows between 19 preceding and current row
+        ) - 2 * stddev(close) over (
+            partition by symbol order by date rows between 19 preceding and current row
+        ) as bollinger_lower
+    from base
+
+),
+
 returns as (
 
     select
@@ -105,6 +160,12 @@ final as (
             when r.avg_loss_14 = 0 then 100
             else 100 - (100 / (1 + (r.avg_gain_14 / r.avg_loss_14)))
         end as rsi_14,
+        macd.macd_line,
+        macd.macd_signal,
+        macd.macd_line - macd.macd_signal as macd_histogram,
+        b.bollinger_upper,
+        b.bollinger_mid,
+        b.bollinger_lower,
         m.rolling_vol_20,
         m.rolling_vol_50,
         m.rolling_vol_200,
@@ -112,6 +173,8 @@ final as (
         m.trailing_return_252d
     from moving_averages m
     inner join rsi r on m.symbol = r.symbol and m.date = r.date
+    inner join macd_signal_calc macd on m.symbol = macd.symbol and m.date = macd.date
+    inner join bollinger b on m.symbol = b.symbol and m.date = b.date
 
 )
 

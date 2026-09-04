@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: int_drawdown
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: max_drawdown_pct
+        tests:
+          - dbt_utils.accepted_range:
+              max_value: 0.0001
+              inclusive: true
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

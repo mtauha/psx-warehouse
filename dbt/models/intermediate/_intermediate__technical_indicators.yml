@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: int_technical_indicators
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: rsi_14
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      - name: rolling_vol_20
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: rolling_vol_50
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: rolling_vol_200
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      # bollinger_upper/lower intentionally have no not_null test: like ma_200/rolling_vol_*,
+      # a ticker's first trading day has a 1-row window, and STDDEV() over a single row is
+      # NULL by SQL standard on both DuckDB and BigQuery -- expected insufficient-history
+      # behavior, not a defect. The singular ordering test below still holds (NULL comparisons
+      # don't trigger a WHERE match, so a NULL band doesn't falsely fail that test either).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

@@ -28,3 +28,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   joined as-of to `dim_tickers` via a shared `as_of_ticker_join` macro;
   and full test coverage (not-null, uniqueness, referential-integrity,
   and accepted-range tests) across staging, the snapshot, and all marts.
+- Technical/analytical indicators layer: `int_technical_indicators` (moving averages, RSI-14, MACD,
+  Bollinger Bands, rolling volatility, trailing returns), `int_drawdown` (all-time-to-date max drawdown),
+  and `fact_technical_indicators` (marts fact table with MA-crossover event detection).

@@ -2,7 +2,8 @@
     config(
         materialized='incremental',
         unique_key=['symbol', 'date'],
-        incremental_strategy='delete+insert'
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
     )
 }}
 
@@ -15,7 +16,12 @@ with base as (
     from {{ ref('stg_stock_history') }}
     where is_latest = true
     {% if is_incremental() %}
-    and date >= {{ dbt.dateadd('day', -500, 'current_date') }}
+    -- PSX trades ~250 days/year, so a 500-calendar-day buffer is only ~342 trading rows --
+    -- not enough to cover the 250 written rows plus a 252-row trailing lookback
+    -- (trailing_return_252d) or a 199-row lookback (ma_200 / rolling_vol_200) at the oldest
+    -- written row. 750 calendar days comfortably covers 250 (write) + 252 (longest lookback)
+    -- + margin for non-trading days (holidays/weekends already excluded upstream).
+    and date >= cast({{ dbt.dateadd('day', -750, 'current_date') }} as date)
     {% endif %}
 
 ),
@@ -27,7 +33,7 @@ ema_base as (
         date,
         close,
         {{ truncated_ema('close', '2.0/13', 90) }} as ema_12,
-        {{ truncated_ema('close', '2.0/27', 90) }} as ema_26
+        {{ truncated_ema('close', '2.0/27', 180) }} as ema_26
     from base
 
 ),
@@ -125,8 +131,8 @@ gain_loss as (
     select
         symbol,
         date,
-        greatest(close - lag(close) over (partition by symbol order by date), 0) as gain,
-        greatest(lag(close) over (partition by symbol order by date) - close, 0) as loss
+        coalesce(greatest(close - lag(close) over (partition by symbol order by date), 0), 0) as gain,
+        coalesce(greatest(lag(close) over (partition by symbol order by date) - close, 0), 0) as loss
     from base
 
 ),
@@ -181,5 +187,5 @@ final as (
 select *
 from final
 {% if is_incremental() %}
-where date >= {{ dbt.dateadd('day', -250, 'current_date') }}
+where date >= cast({{ dbt.dateadd('day', -250, 'current_date') }} as date)
 {% endif %}

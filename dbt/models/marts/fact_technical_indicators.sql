@@ -2,7 +2,8 @@
     config(
         materialized='incremental',
         unique_key=['symbol', 'date'],
-        incremental_strategy='delete+insert'
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
     )
 }}
 
@@ -11,7 +12,7 @@ with indicators as (
     select *
     from {{ ref('int_technical_indicators') }}
     {% if is_incremental() %}
-    where date >= {{ dbt.dateadd('day', -500, 'current_date') }}
+    where date >= cast({{ dbt.dateadd('day', -500, 'current_date') }} as date)
     {% endif %}
 
 ),
@@ -36,7 +37,7 @@ drawdown as (
     select *
     from {{ ref('int_drawdown') }}
     {% if is_incremental() %}
-    where date >= {{ dbt.dateadd('day', -500, 'current_date') }}
+    where date >= cast({{ dbt.dateadd('day', -500, 'current_date') }} as date)
     {% endif %}
 
 ),
@@ -46,7 +47,7 @@ ohlcv as (
     select symbol, date, ticker_key
     from {{ ref('fact_ohlcv') }}
     {% if is_incremental() %}
-    where date >= {{ dbt.dateadd('day', -500, 'current_date') }}
+    where date >= cast({{ dbt.dateadd('day', -500, 'current_date') }} as date)
     {% endif %}
 
 ),
@@ -84,5 +85,5 @@ joined as (
 select *
 from joined
 {% if is_incremental() %}
-where date >= {{ dbt.dateadd('day', -250, 'current_date') }}
+where date >= cast({{ dbt.dateadd('day', -250, 'current_date') }} as date)
 {% endif %}

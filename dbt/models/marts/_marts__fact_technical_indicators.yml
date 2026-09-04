@@ -19,6 +19,13 @@ models:
               field: date
       - name: max_drawdown_pct
         tests: [not_null]
+      - name: ma_crossover_event
+        tests:
+          - accepted_values:
+              values: ['golden_cross', 'death_cross']
+              quote: true
+              config:
+                where: "ma_crossover_event is not null"
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [symbol, date]

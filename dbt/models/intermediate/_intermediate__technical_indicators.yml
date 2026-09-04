@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: int_technical_indicators
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: rsi_14
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      - name: rolling_vol_20
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: rolling_vol_50
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: rolling_vol_200
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

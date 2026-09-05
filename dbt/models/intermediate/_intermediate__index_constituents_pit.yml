@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: int_index_constituents_pit
+    description: >
+      Point-in-time-safe index constituent snapshot: first-observed row per
+      (index_name, symbol, snapshot_date), not the most-recently-loaded row
+      fact_index_membership uses. current_index is the daily KSE-100 index
+      level, repeated per constituent row for that day.
+    columns:
+      - name: index_name
+        tests: [not_null, relationships: {to: ref('dim_indices'), field: index_name}]
+      - name: ticker_key
+        # Same bootstrap-horizon NULL gap as fact_index_membership's identical
+        # as_of_ticker_join usage - warn, not error, so it's visible without
+        # failing the build.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          - relationships:
+              to: ref('dim_tickers')
+              field: dbt_scd_id
+      - name: snapshot_date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: idx_weight
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: market_cap_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: freefloat_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: shares_m
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: current_index
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [index_name, symbol, snapshot_date]

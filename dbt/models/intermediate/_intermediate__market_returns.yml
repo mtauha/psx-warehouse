@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: int_market_returns
+    description: >
+      KSE-100 daily index return series, derived from
+      int_index_constituents_pit.current_index deduped to one row per day.
+      Benchmark series for relative-strength, beta, and sector-rotation
+      measures throughout this layer.
+    columns:
+      - name: date
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date
+      - name: current_index
+        tests: [not_null, {dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]

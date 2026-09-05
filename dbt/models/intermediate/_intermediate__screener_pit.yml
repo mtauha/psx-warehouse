@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: int_screener_pit
+    description: >
+      Point-in-time-safe screener snapshot: first-observed row per (symbol,
+      date), not the most-recently-loaded row fact_valuation_daily uses.
+    columns:
+      - name: ticker_key
+        # Same known symbol-coverage gap as fact_valuation_daily (NC/XD/XB
+        # corporate-action-variant symbols absent from dim_tickers) - warn.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          - relationships:
+              to: ref('dim_tickers')
+              field: dbt_scd_id
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: market_cap
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: price
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: pe_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000
+              max_value: 1000
+              config: {severity: warn}
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, date]

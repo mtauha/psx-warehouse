@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: fact_ticker_relationships
+    description: >
+      Per-ticker beta vs. KSE-100 (full/upside/downside) and correlation
+      (vs. index, vs. own sector), rolling 252-trading-day window.
+    columns:
+      - name: ticker_key
+        tests: [not_null, relationships: {to: ref('dim_tickers'), field: dbt_scd_id}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: beta_full_252d
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config: {severity: warn}
+      - name: beta_upside_252d
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config: {severity: warn}
+      - name: beta_downside_252d
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config: {severity: warn}
+      - name: corr_vs_index_252d
+        tests: [{dbt_utils.accepted_range: {min_value: -1, max_value: 1}}]
+      - name: corr_vs_sector_252d
+        tests: [{dbt_utils.accepted_range: {min_value: -1, max_value: 1}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker_key, date]

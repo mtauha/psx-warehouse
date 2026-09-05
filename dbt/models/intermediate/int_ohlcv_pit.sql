@@ -26,7 +26,7 @@ with first_observed as (
     -- Same buffer sizing as int_technical_indicators: PSX trades ~250 days/year, so
     -- 750 calendar days comfortably covers the 199-row rolling_vol_200 lookback (and
     -- the smaller 63-row trailing_return_63d lookback) at the oldest written row.
-    and date >= cast({{ dbt.dateadd('day', -750, 'current_date') }} as date)
+    where date >= cast({{ dbt.dateadd('day', -750, 'current_date') }} as date)
     {% endif %}
 
 ),

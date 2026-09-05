@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: int_ohlcv_pit
+    description: >
+      Point-in-time-safe OHLCV: first-observed row per (symbol, date), not the
+      most-recently-loaded row fact_ohlcv uses. Backing model for every
+      backtestable cross-sectional measure in this layer.
+    columns:
+      - name: ticker_key
+        tests: [not_null, relationships: {to: ref('dim_tickers'), field: dbt_scd_id}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: open
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: high
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: low
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: close
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: volume
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: rolling_vol_200
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker_key, date]

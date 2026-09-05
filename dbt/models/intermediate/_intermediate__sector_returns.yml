@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: int_sector_returns
+    description: >
+      Cap-weighted average of constituent daily returns per sector, built from
+      int_ohlcv_pit (point-in-time-safe). Benchmark series for sector-rotation
+      scoring and sector-to-sector correlation.
+    columns:
+      - name: sector_code
+        tests: [not_null, relationships: {to: ref('dim_sectors'), field: sector_code}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [sector_code, date]

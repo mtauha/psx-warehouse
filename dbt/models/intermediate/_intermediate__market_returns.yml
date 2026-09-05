@@ -9,11 +9,7 @@ models:
       measures throughout this layer.
     columns:
       - name: date
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_date')
-              field: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
       - name: current_index
         tests: [not_null, {dbt_utils.accepted_range: {min_value: 0}}]
     tests:

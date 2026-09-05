@@ -14,7 +14,7 @@ with market_level as (
         ) as current_index
     from {{ ref('int_index_constituents_pit') }}
     where index_name = 'KSE100'  -- hardcoded per Global Constraints: this project's extraction is currently scoped to a single tracked index (extract/config.py's INDEX_NAMES default), but that's a config default, not a schema guarantee - don't assume it's the only row forever
-        and current_index is not null
+        and current_index is not null  -- excludes 3 real NULL rows found in source; current_index should be valid index level per documented assumption
 
 ),
 

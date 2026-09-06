@@ -78,6 +78,26 @@ models:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [index_name, symbol, snapshot_date]
 
+  - name: fact_index_ohlcv
+    columns:
+      - name: index_name
+        tests: [not_null, relationships: {to: ref('dim_indices'), field: index_name}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: open
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: high
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: low
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: close
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+      - name: volume
+        tests: [{dbt_utils.accepted_range: {min_value: 0}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [index_name, date]
+
   - name: fact_sector_daily
     columns:
       - name: sector_code

@@ -42,3 +42,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rankings for momentum, relative strength, value (P/E), and low-volatility,
   ranked over the point-in-time KSE-100 universe
   (`fact_cross_sectional_rankings`).
+- Index-level price history: `fact_index_ohlcv` (daily open/high/low/close/
+  volume/change% for KSE-100, 2010-01-04 onward), sourced from a committed
+  dbt seed rather than `extract/` — the `psxdata` SDK has no historical
+  index-price endpoint (only current-state daily snapshots). A one-time prep
+  script (`dbt/seeds/prepare_seed_index_price_history.py`) normalizes a
+  raw investing.com-style export into the seed CSV; `dbt seed` then loads it
+  identically on any target, including BigQuery once it's live.

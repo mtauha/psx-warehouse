@@ -16,8 +16,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
+          version: "0.12.10"
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked --all-extras --dev
@@ -33,8 +37,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
+          version: "0.12.10"
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked --all-extras --dev
@@ -53,6 +61,7 @@ jobs:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
+          version: "0.12.10"
           enable-cache: true
       - name: Install dbt
         run: uv pip install --system dbt-core dbt-bigquery

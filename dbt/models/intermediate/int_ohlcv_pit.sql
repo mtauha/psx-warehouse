@@ -18,8 +18,11 @@ with first_observed as (
         close,
         volume,
         is_anomaly,
+        -- history_id as a secondary sort key breaks ties deterministically
+        -- when loaded_at is exactly equal across rows for the same
+        -- (symbol, date) - loaded_at alone has no tiebreaker.
         row_number() over (
-            partition by symbol, date order by loaded_at asc
+            partition by symbol, date order by loaded_at asc, history_id asc
         ) as rn
     from {{ ref('stg_stock_history') }}
     {% if is_incremental() %}
@@ -51,7 +54,7 @@ returns as (
         volume,
         is_anomaly,
         (close - lag(close) over (partition by symbol order by date))
-            / lag(close) over (partition by symbol order by date) as daily_return_pct
+            / nullif(lag(close) over (partition by symbol order by date), 0) as daily_return_pct
     from base
 
 ),
@@ -72,7 +75,7 @@ derived as (
             partition by symbol order by date rows between 199 preceding and current row
         ) as rolling_vol_200,
         (close - lag(close, 63) over (partition by symbol order by date))
-            / lag(close, 63) over (partition by symbol order by date) as trailing_return_63d
+            / nullif(lag(close, 63) over (partition by symbol order by date), 0) as trailing_return_63d
     from returns
 
 )
@@ -89,7 +92,12 @@ select
     d.is_anomaly,
     d.daily_return_pct,
     d.rolling_vol_200,
-    d.trailing_return_63d
+    d.trailing_return_63d,
+    case
+        when real_match.dbt_scd_id is not null then false
+        when earliest_match.dbt_scd_id is not null then true
+        else null
+    end as is_ticker_attrs_assumed
 from derived d
 {{ as_of_ticker_join('d', 'date') }}
 {% if is_incremental() %}

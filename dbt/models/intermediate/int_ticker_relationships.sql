@@ -38,45 +38,80 @@ with_market_and_sector as (
     left join {{ ref('int_market_returns') }} m on tr.date = m.date
     left join {{ ref('int_sector_returns') }} sr on tr.sector_code = sr.sector_code and tr.date = sr.date
 
-)
-,
+),
 
 windowed as (
 
+    -- Partitioned by symbol (stable across a ticker's whole history), not
+    -- ticker_key (a SCD2-versioned surrogate key from dim_tickers that
+    -- changes whenever a tracked attribute - name/sector/is_etf/is_debt/
+    -- is_gem/is_margin_eligible - changes). Partitioning by ticker_key would
+    -- silently restart the 252-row window on every such attribute change,
+    -- producing a well-formed but statistically meaningless value computed
+    -- over a handful of observations. Each measure is also nulled out below
+    -- (via a count(...) >= 252 guard) until its window actually has a full
+    -- 252 observations - rows between 251 preceding and current row can have
+    -- fewer than 252 rows only at the start of a symbol's history, which is
+    -- exactly the case being guarded against.
     select
         ticker_key,
         symbol,
         date,
-        covar_samp(stock_return, market_return) over (
-            partition by ticker_key order by date rows between 251 preceding and current row
+        case when count(stock_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        ) >= 252
+        then covar_samp(stock_return, market_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
         )
             / nullif(var_samp(market_return) over (
-                partition by ticker_key order by date rows between 251 preceding and current row
-            ), 0) as beta_full_252d,
-        covar_samp(
+                partition by symbol order by date rows between 251 preceding and current row
+            ), 0)
+        else null
+        end as beta_full_252d,
+        case when count(case when market_return >= 0 then stock_return end) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        ) >= 252
+        then covar_samp(
             case when market_return >= 0 then stock_return end,
             case when market_return >= 0 then market_return end
         ) over (
-            partition by ticker_key order by date rows between 251 preceding and current row
+            partition by symbol order by date rows between 251 preceding and current row
         )
             / nullif(var_samp(case when market_return >= 0 then market_return end) over (
-                partition by ticker_key order by date rows between 251 preceding and current row
-            ), 0) as beta_upside_252d,
-        covar_samp(
+                partition by symbol order by date rows between 251 preceding and current row
+            ), 0)
+        else null
+        end as beta_upside_252d,
+        case when count(case when market_return < 0 then stock_return end) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        ) >= 252
+        then covar_samp(
             case when market_return < 0 then stock_return end,
             case when market_return < 0 then market_return end
         ) over (
-            partition by ticker_key order by date rows between 251 preceding and current row
+            partition by symbol order by date rows between 251 preceding and current row
         )
             / nullif(var_samp(case when market_return < 0 then market_return end) over (
-                partition by ticker_key order by date rows between 251 preceding and current row
-            ), 0) as beta_downside_252d,
-        corr(stock_return, market_return) over (
-            partition by ticker_key order by date rows between 251 preceding and current row
-        ) as corr_vs_index_raw,
-        corr(stock_return, sector_return) over (
-            partition by ticker_key order by date rows between 251 preceding and current row
-        ) as corr_vs_sector_raw
+                partition by symbol order by date rows between 251 preceding and current row
+            ), 0)
+        else null
+        end as beta_downside_252d,
+        case when count(stock_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        ) >= 252
+        then corr(stock_return, market_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        )
+        else null
+        end as corr_vs_index_raw,
+        case when count(stock_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        ) >= 252
+        then corr(stock_return, sector_return) over (
+            partition by symbol order by date rows between 251 preceding and current row
+        )
+        else null
+        end as corr_vs_sector_raw
     from with_market_and_sector
 
 )

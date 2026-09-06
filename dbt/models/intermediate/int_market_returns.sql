@@ -24,7 +24,7 @@ returns as (
         date,
         current_index,
         (current_index - lag(current_index) over (order by date))
-            / lag(current_index) over (order by date) as daily_return_pct
+            / nullif(lag(current_index) over (order by date), 0) as daily_return_pct
     from market_level
 
 )
@@ -34,5 +34,5 @@ select
     current_index,
     daily_return_pct,
     (current_index - lag(current_index, 63) over (order by date))
-        / lag(current_index, 63) over (order by date) as trailing_return_63d
+        / nullif(lag(current_index, 63) over (order by date), 0) as trailing_return_63d
 from returns

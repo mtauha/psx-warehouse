@@ -18,9 +18,14 @@ with universe as (
         and ticker_key is not null  -- excludes null ticker_key rows from source
     {% if is_incremental() %}
     -- No 252-row lookback needed here (unlike the relationship family) -
-    -- ranking only needs that single day's own cross-section, so a small
-    -- buffer just covers late-arriving corrections in the last few days.
-    and snapshot_date >= cast({{ dbt.dateadd('day', -7, 'current_date') }} as date)
+    -- ranking only needs that single day's own cross-section. The buffer is
+    -- sized to match int_ohlcv_pit's own rewrite window (it re-derives and
+    -- rewrites momentum_63d/rolling_vol_200 for the last 250 calendar days on
+    -- every incremental run), not just late-arriving corrections in the last
+    -- few days - a narrower buffer here would let this mart silently
+    -- disagree with int_ohlcv_pit's freshly-corrected values for dates it
+    -- doesn't rebuild.
+    and snapshot_date >= cast({{ dbt.dateadd('day', -250, 'current_date') }} as date)
     {% endif %}
 
 ),

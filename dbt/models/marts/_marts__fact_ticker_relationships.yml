@@ -8,6 +8,9 @@ models:
     columns:
       - name: ticker_key
         tests: [not_null, relationships: {to: ref('dim_tickers'), field: dbt_scd_id}]
+      - name: symbol
+        description: Ticker symbol, stable across dim_tickers SCD2 versions.
+        tests: [not_null]
       - name: date
         tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
       - name: beta_full_252d

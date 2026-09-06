@@ -5,7 +5,7 @@ with universe_size as (
 
     select snapshot_date as date, count(distinct ticker_key) as n_constituents
     from {{ ref('int_index_constituents_pit') }}
-    where index_name = 'KSE100'
+    where index_name = 'KSE100'  -- hardcoded per Global Constraints: this project's extraction is currently scoped to a single tracked index (extract/config.py's INDEX_NAMES default), but that's a config default, not a schema guarantee - don't assume it's the only row forever
     group by snapshot_date
 
 )

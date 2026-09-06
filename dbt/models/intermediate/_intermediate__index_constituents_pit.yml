@@ -5,8 +5,8 @@ models:
     description: >
       Point-in-time-safe index constituent snapshot: first-observed row per
       (index_name, symbol, snapshot_date), not the most-recently-loaded row
-      fact_index_membership uses. current_index is the daily KSE-100 index
-      level, repeated per constituent row for that day.
+      fact_index_membership uses. current_index is the daily index level for
+      the given index_name, repeated per constituent row for that day.
     columns:
       - name: index_name
         tests: [not_null, relationships: {to: ref('dim_indices'), field: index_name}]

@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: fact_sector_correlation
+    description: >
+      Sector-to-sector rolling 252-trading-day correlation. Each unordered
+      pair stored once in canonical order (sector_code_a < sector_code_b).
+    columns:
+      - name: sector_code_a
+        tests: [not_null, relationships: {to: ref('dim_sectors'), field: sector_code}]
+      - name: sector_code_b
+        tests: [not_null, relationships: {to: ref('dim_sectors'), field: sector_code}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: correlation_252d
+        tests: [{dbt_utils.accepted_range: {min_value: -1, max_value: 1}}]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [sector_code_a, sector_code_b, date]

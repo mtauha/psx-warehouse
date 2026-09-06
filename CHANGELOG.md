@@ -31,3 +31,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Technical/analytical indicators layer: `int_technical_indicators` (moving averages, RSI-14, MACD,
   Bollinger Bands, rolling volatility, trailing returns), `int_drawdown` (all-time-to-date max drawdown),
   and `fact_technical_indicators` (marts fact table with MA-crossover event detection).
+- Cross-sectional/multi-comparison analytics layer: a point-in-time (`_pit`)
+  foundation (`int_ohlcv_pit`, `int_index_constituents_pit`, `int_screener_pit`)
+  fixing look-ahead bias from restated historical data; market and cap-weighted
+  sector return series (`int_market_returns`, `int_sector_returns`); rolling
+  252-trading-day beta (full/upside/downside) and correlation vs. index/sector
+  (`int_ticker_relationships`, `fact_ticker_relationships`); sector-to-sector
+  correlation (`int_sector_correlation`, `fact_sector_correlation`);
+  sector-rotation scoring (`fact_sector_rotation`); and daily cross-sectional
+  rankings for momentum, relative strength, value (P/E), and low-volatility,
+  ranked over the point-in-time KSE-100 universe
+  (`fact_cross_sectional_rankings`).

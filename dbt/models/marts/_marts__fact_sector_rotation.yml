@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: fact_sector_rotation
+    description: >
+      Sector-rotation scoring: each sector's own trailing 63-trading-day return
+      vs. the KSE-100's, ranked into quintiles across sectors each day.
+    columns:
+      - name: sector_code
+        tests: [not_null, relationships: {to: ref('dim_sectors'), field: sector_code}]
+      - name: date
+        tests: [not_null, relationships: {to: ref('dim_date'), field: date}]
+      - name: rotation_quintile
+        tests:
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+              config: {where: "rotation_quintile is not null"}
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [sector_code, date]

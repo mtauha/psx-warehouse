@@ -1,5 +1,11 @@
 # PSX Analytics Warehouse
 
+[![CI](https://github.com/mtauha/psx-warehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/mtauha/psx-warehouse/actions/workflows/ci.yml)
+[![Docker Publish](https://github.com/mtauha/psx-warehouse/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/mtauha/psx-warehouse/actions/workflows/docker-publish.yml)
+[![dbt docs](https://github.com/mtauha/psx-warehouse/actions/workflows/dbt-docs.yml/badge.svg)](https://github.com/mtauha/psx-warehouse/actions/workflows/dbt-docs.yml)
+[![Docker Hub](https://img.shields.io/badge/docker-mtauha%2Fpsx--warehouse-blue?logo=docker)](https://hub.docker.com/r/mtauha/psx-warehouse)
+[![License: MIT](https://img.shields.io/github/license/mtauha/psx-warehouse)](LICENSE.md)
+
 dbt-core + BigQuery analytics layer on top of the [`psxdata`](https://github.com/mtauha/psxdata) SDK, turning raw PSX OHLCV data into tested, analysis-ready marts.
 
 A personal analytics warehouse on PSX/KSE-100 stocks.

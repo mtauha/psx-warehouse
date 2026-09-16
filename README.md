@@ -5,14 +5,16 @@ dbt-core + BigQuery analytics layer on top of the [`psxdata`](https://github.com
 A personal analytics warehouse on PSX/KSE-100 stocks.
 
 **Status:** under construction. Raw-layer extraction and the dbt marts layer
-are built and tested against MotherDuck; Terraform-managed GCP infrastructure
-(BigQuery raw dataset, Cloud Run Job, Cloud Scheduler) is written and
-`terraform validate`-clean, pending the GCP billing account before `apply`.
+are built and tested against MotherDuck. In production GCP: the service
+account, its BigQuery IAM bindings, and the `raw` dataset are live; the
+Cloud Run Job and Cloud Scheduler job are defined and `terraform
+validate`-clean but not yet created, pending full GCP billing activation.
+See `DEPLOYMENT.md` for the full setup and current state.
 
 ## Layout
 
 - `extract/` — Python extraction from the `psxdata` SDK into raw tables
-  (BigQuery and MotherDuck)
+  (BigQuery and MotherDuck; see `CONTRIBUTING.md` for adding another backend)
 - `dbt/` — dbt-core project (staging / intermediate / marts), built on
   MotherDuck/DuckDB for dev and targeting BigQuery for prod:
   - `models/staging/` — one staging model per raw source (`stg_stock_history`,
@@ -37,5 +39,12 @@ are built and tested against MotherDuck; Terraform-managed GCP infrastructure
 - `dbt-docs.yml` — publishes dbt docs to GitHub Pages on every `dbt/` change:
   https://mtauha.github.io/psx-warehouse/ (generated against the MotherDuck dev
   target until BigQuery/Terraform is live).
+
+## Guides
+
+- `DEPLOYMENT.md` — architecture, prerequisites, GCP bootstrap, deploying/
+  verifying the infrastructure, and known limitations.
+- `CONTRIBUTING.md` — adding a new raw-storage backend (with a working
+  template at `extract/example_backend.py`).
 
 <!-- CI verification: phase 1 scaffolding -->

@@ -3,5 +3,5 @@ resource "google_bigquery_dataset" "raw" {
   dataset_id = var.bq_dataset
   location   = var.bq_location
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["bigquery.googleapis.com"]]
 }

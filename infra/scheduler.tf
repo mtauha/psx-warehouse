@@ -15,7 +15,7 @@ resource "google_cloud_scheduler_job" "extract_daily" {
   }
 
   depends_on = [
-    google_project_service.required,
+    google_project_service.required["cloudscheduler.googleapis.com"],
     google_cloud_run_v2_job_iam_member.scheduler_invokes,
   ]
 }

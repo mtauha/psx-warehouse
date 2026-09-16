@@ -39,7 +39,7 @@ resource "google_cloud_run_v2_job" "extract" {
   }
 
   depends_on = [
-    google_project_service.required,
+    google_project_service.required["run.googleapis.com"],
     google_project_iam_member.runner_bigquery_data_editor,
     google_project_iam_member.runner_bigquery_job_user,
   ]

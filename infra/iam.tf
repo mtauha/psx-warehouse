@@ -3,7 +3,7 @@ resource "google_service_account" "runner" {
   account_id   = "psx-warehouse-runner"
   display_name = "psx-warehouse Cloud Run Job identity"
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["iam.googleapis.com"]]
 }
 
 resource "google_project_iam_member" "runner_bigquery_data_editor" {

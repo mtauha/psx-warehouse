@@ -25,6 +25,10 @@ dev = [
     "pytest>=7",
     "pytest-cov>=4",
 ]
+dbt = [
+    "dbt-core>=1.8,<2.0",
+    "dbt-bigquery>=1.8,<2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/mtauha/psx-warehouse"

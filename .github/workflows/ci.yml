@@ -63,11 +63,11 @@ jobs:
         with:
           version: "0.12.10"
           enable-cache: true
-      - name: Install dbt
-        run: uv pip install --system dbt-core dbt-bigquery
+      - name: Install dependencies
+        run: uv sync --locked --extra dbt
       - name: Install dbt packages
         working-directory: dbt
-        run: dbt deps
+        run: uv run --project .. dbt deps
       - name: Write stub profiles.yml
         run: |
           mkdir -p ~/.dbt
@@ -84,4 +84,4 @@ jobs:
           EOF
       - name: dbt parse
         working-directory: dbt
-        run: dbt parse
+        run: uv run --project .. dbt parse

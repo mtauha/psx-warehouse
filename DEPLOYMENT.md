@@ -1,7 +1,19 @@
 # Deployment Guide
 
-How this warehouse runs day to day, and how to stand up your own copy of it
-from nothing.
+How to run this warehouse — locally against MotherDuck in a few minutes, or
+deployed to your own GCP project.
+
+## Contents
+
+- [Architecture](#architecture)
+- [Local development (MotherDuck)](#local-development-motherduck)
+- [Production deployment (GCP)](#production-deployment-gcp)
+  - [Prerequisites](#prerequisites)
+  - [GCP bootstrap (one-time, manual)](#gcp-bootstrap-one-time-manual)
+  - [Deploying the infrastructure](#deploying-the-infrastructure)
+  - [Verifying a deployment](#verifying-a-deployment)
+- [CI/CD](#cicd)
+- [Known limitation: dbt writes into the raw dataset](#known-limitation-dbt-writes-into-the-raw-dataset)
 
 ## Architecture
 
@@ -18,27 +30,23 @@ BigQuery (raw dataset; staging/intermediate/marts currently share it too --
           see "Known limitation" below)
 ```
 
-One service account (`psx-warehouse-runner`) does double duty: it's the
-identity Cloud Scheduler authenticates as to invoke the Job, and the identity
-the Job itself runs as (attached directly, no downloadable key — both
-`extract/bigquery_io.py` and dbt-bigquery's `oauth` auth method resolve
-Application Default Credentials from Cloud Run's metadata server
+That's the production path. Locally, the same two steps (`extract` then
+`dbt build`) run by hand against MotherDuck instead — no Scheduler, no Cloud
+Run, no orchestration at all.
+
+In production, one service account (`psx-warehouse-runner`) does double
+duty: it's the identity Cloud Scheduler authenticates as to invoke the Job,
+and the identity the Job itself runs as (attached directly, no downloadable
+key — both `extract/bigquery_io.py` and dbt-bigquery's `oauth` auth method
+resolve Application Default Credentials from Cloud Run's metadata server
 automatically).
 
-## Prerequisites
+## Local development (MotherDuck)
 
-- A GCP project, with a billing account linked. Terraform does not create
-  the project itself — see "Bootstrap" below.
-- [gcloud CLI](https://cloud.google.com/sdk/docs/install) and
-  [Terraform](https://developer.hashicorp.com/terraform/downloads) installed
-  locally.
-- [uv](https://docs.astral.sh/uv/) and Docker, for local development and
-  testing the image before it ships.
-- Three GitHub repo secrets on this repo: `DOCKERHUB_USERNAME`,
-  `DOCKERHUB_TOKEN` (for `docker-publish.yml`), `MOTHERDUCK_TOKEN` (for
-  `dbt-docs.yml`).
+The fastest way to run the whole pipeline end to end.
 
-## Local development
+**Prerequisites:** [uv](https://docs.astral.sh/uv/), a free
+[MotherDuck](https://motherduck.com/) account and token.
 
 ```bash
 uv sync --extra dev --extra dbt
@@ -46,21 +54,43 @@ cp dbt/profiles.example.yml ~/.dbt/profiles.yml   # fill in your own MD_DATABASE
 ```
 
 Run extraction against MotherDuck (never against production BigQuery from a
-laptop):
+laptop — that's what the GCP deployment below is for):
 
 ```bash
 BACKEND=motherduck MD_DATABASE=your_db MOTHERDUCK_TOKEN=... python -m extract.main
 cd dbt && dbt build --target dev
 ```
 
-See `CONTRIBUTING.md` if you're adding a new backend rather than running an
-existing one.
+Browse the lineage graph locally:
 
-## GCP bootstrap (one-time, manual)
+```bash
+dbt docs generate --target dev
+dbt docs serve
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) if you're adding a new backend rather
+than running an existing one.
+
+## Production deployment (GCP)
+
+### Prerequisites
+
+- A GCP project, with a billing account linked. Terraform does not create
+  the project itself — see "GCP bootstrap" below.
+- [gcloud CLI](https://cloud.google.com/sdk/docs/install) and
+  [Terraform](https://developer.hashicorp.com/terraform/downloads) installed
+  locally.
+- [uv](https://docs.astral.sh/uv/) and Docker, to build and test the image
+  before it ships.
+- Three GitHub repo secrets, if you fork this: `DOCKERHUB_USERNAME`,
+  `DOCKERHUB_TOKEN` (for `docker-publish.yml`), `MOTHERDUCK_TOKEN` (for
+  `dbt-docs.yml`).
+
+### GCP bootstrap (one-time, manual)
 
 Terraform (`infra/`) manages everything *inside* a project — the project's
 own existence and billing link are outside its scope on purpose (there's no
-clean unattended path for either at this project's personal scale).
+clean unattended path for either at personal-project scale).
 
 1. Create the GCP project (console or `gcloud projects create`); note the
    Project ID.
@@ -72,7 +102,7 @@ clean unattended path for either at this project's personal scale).
 3. `gcloud auth application-default login` — gives Terraform's `google`
    provider your own credentials to plan/apply with.
 
-## Deploying the infrastructure
+### Deploying the infrastructure
 
 ```bash
 cd infra
@@ -87,8 +117,8 @@ gcp_project = "your-real-project-id"
 ```
 
 (Every other variable — region, dataset name/location, image reference,
-schedule — already defaults to this project's actual settings; override only
-if you genuinely want something different. See `infra/variables.tf`.)
+schedule — already has a sensible default; override only if you genuinely
+want something different. See `infra/variables.tf`.)
 
 ```bash
 terraform plan
@@ -102,38 +132,34 @@ references any single instance of a `for_each`'d resource pulls the *entire*
 don't want retried. A plain `terraform apply` with no `-target` flags
 correctly creates everything whose real dependencies are satisfied and
 leaves only the genuinely-blocked resources pending, because the normal
-execution graph (unlike `-target`'s closure computation) respects per-instance
-dependencies correctly. If you ever do need `-target` for a real emergency,
-quote each value in PowerShell (`-target="type.name"`) — unquoted values get
-mis-tokenized by this environment's PowerShell/Terraform combination.
+execution graph (unlike `-target`'s closure computation) respects
+per-instance dependencies correctly. If you ever do need `-target` for a
+real emergency, quote each value in PowerShell (`-target="type.name"`) —
+unquoted values get mis-tokenized by PowerShell/Terraform on Windows.
 
-### If billing isn't fully active yet
-
-APIs that don't need billing (`bigquery`, `iam`, `cloudresourcemanager`,
-`serviceusage`) enable fine, and everything depending only on those
-(the service account, its two BigQuery IAM bindings, the `raw` dataset)
-creates successfully. `run.googleapis.com` and `cloudscheduler.googleapis.com`
-— and anything depending on them (the Cloud Run Job, its invoker binding,
-the Scheduler job) — fail with:
+**If billing isn't fully active yet:** APIs that don't need it (`bigquery`,
+`iam`, `cloudresourcemanager`, `serviceusage`) enable fine, and everything
+depending only on those (the service account, its two BigQuery IAM bindings,
+the `raw` dataset) creates successfully. `run.googleapis.com` and
+`cloudscheduler.googleapis.com` — and anything depending on them (the Cloud
+Run Job, its invoker binding, the Scheduler job) — fail with:
 
 ```
 Error 400: Billing account for project '...' is not found.
 ```
 
-This is expected, not a config bug. Once billing is fully linked, re-run the
-same plain `terraform apply` — already-created resources are a no-op (state
-already matches), and only the previously-blocked resources get created.
+That's expected, not a config bug. Once billing is fully linked, re-run the
+same plain `terraform apply` — already-created resources are a no-op, and
+only the previously-blocked resources get created.
 
 If `google_project_service` itself fails to enable anything (a fresh project
-without Service Usage API already on), the fallback is:
+without the Service Usage API already on), the fallback is:
 
 ```bash
 gcloud services enable serviceusage.googleapis.com
 ```
 
-### Starting over
-
-If you want a genuinely clean slate:
+**Starting over:**
 
 ```bash
 terraform destroy          # tears down what Terraform actually created
@@ -144,12 +170,12 @@ terraform apply
 
 Never delete `infra/terraform.tfstate` by hand instead of running `destroy`
 — that makes Terraform *forget* resources without deleting them in GCP,
-orphaning real cloud resources it no longer tracks. Do leave
+orphaning real cloud resources it no longer tracks. Leave
 `infra/.terraform.lock.hcl` alone when clearing the cache — it pins the
 exact provider version for reproducibility; deleting it lets `init` resolve
 a potentially different one.
 
-## Verifying a deployment
+### Verifying a deployment
 
 ```bash
 gcloud run jobs execute psx-warehouse-extract --region us-central1
@@ -171,10 +197,9 @@ take over unsupervised.
 
 As currently configured, dbt has no `+schema:`/`generate_schema_name`
 override, so `staging`/`intermediate`/`marts` objects all land in the same
-BigQuery dataset as the raw extraction tables (`raw` by default) — not in
-separate datasets, despite what the layer names might suggest. This causes
-no collisions today (verified: no name overlaps between raw tables and dbt
-models) and predates the Terraform work entirely (true since
-`dbt/profiles.example.yml` was first written). If you want genuine dataset
+dataset as the raw extraction tables (`raw` by default) — not in separate
+datasets, despite what the layer names might suggest. This causes no
+collisions today (no name overlaps between raw tables and dbt models) and
+predates the Terraform work entirely. If you want genuine dataset
 separation, that's an open design decision — not something this guide's
 setup does for you.

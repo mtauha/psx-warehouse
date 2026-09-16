@@ -16,6 +16,7 @@ build/
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+/logs/
 
 # Terraform
 infra/.terraform/

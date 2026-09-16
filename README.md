@@ -29,4 +29,13 @@ are built and tested against MotherDuck; Terraform-managed GCP infrastructure
   lands), and a Cloud Scheduler job triggering it daily at 6 PM PKT
   (`Asia/Karachi`).
 
+## CI/CD
+
+- `ci.yml` — lint, test, and `dbt parse` validation on every push/PR to `main`.
+- `docker-publish.yml` — builds and pushes `mtauha/psx-warehouse:latest` (and a
+  short-sha tag) to Docker Hub on every push to `main`.
+- `dbt-docs.yml` — publishes dbt docs to GitHub Pages on every `dbt/` change:
+  https://mtauha.github.io/psx-warehouse/ (generated against the MotherDuck dev
+  target until BigQuery/Terraform is live).
+
 <!-- CI verification: phase 1 scaffolding -->

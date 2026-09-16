@@ -1,0 +1,72 @@
+name: Publish dbt docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dbt/**"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build dbt docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.10"
+          enable-cache: true
+      - name: Install dbt
+        run: uv pip install --system dbt-core dbt-duckdb
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+      - name: Write profiles.yml
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          MD_DATABASE: psx_raw_dev
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml <<EOF
+          psx_warehouse:
+            target: dev
+            outputs:
+              dev:
+                type: duckdb
+                path: "md:${MD_DATABASE}?motherduck_token=${MOTHERDUCK_TOKEN}"
+                threads: 1
+          EOF
+      - name: Generate dbt docs
+        working-directory: dbt
+        run: dbt docs generate --target dev
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dbt/target
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

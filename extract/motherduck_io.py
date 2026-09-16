@@ -1,8 +1,9 @@
-"""MotherDuck (DuckDB) I/O for local development — mirrors bigquery_io.py's
-function shapes so both satisfy extract.storage.RawStorage. Tests for the
-read/write functions run against a real local DuckDB file, not live
-MotherDuck — the SQL dialect is identical either way, only the connection
-string differs.
+"""DuckDB-family I/O for local development — either a plain local .duckdb
+file or a MotherDuck cloud database (see load_config()), chosen purely by
+which environment variables are set. Mirrors bigquery_io.py's function
+shapes so both satisfy extract.storage.RawStorage. Tests for the read/write
+functions run against a real local DuckDB file either way — the SQL dialect
+is identical, only the connection string differs.
 """
 from __future__ import annotations
 
@@ -148,44 +149,62 @@ _CREATE_SCREENER_SQL = f"""
 
 @dataclass(frozen=True)
 class MotherDuckConfig:
-    """Resolved MotherDuck-backend configuration."""
+    """Resolved configuration for the DuckDB-family backend — either a
+    local DuckDB file or a MotherDuck cloud database. Which one is used is
+    controlled entirely by whether MOTHERDUCK_TOKEN is set (see
+    load_config()); this dataclass just carries the resolved DuckDB
+    connection string either way, so get_client() doesn't need to know
+    which mode it's in.
+    """
 
-    motherduck_token: str
-    md_database: str
+    connection_string: str
 
 
 def load_config() -> MotherDuckConfig:
-    """Load MotherDuck-backend configuration from environment variables.
+    """Load this backend's configuration from environment variables.
 
-    Required:
-        MOTHERDUCK_TOKEN: MotherDuck service token.
-        MD_DATABASE: MotherDuck database name (e.g. "raw_dev").
+    Two modes, chosen by whether MOTHERDUCK_TOKEN is set:
+
+    MotherDuck (cloud) — MOTHERDUCK_TOKEN present:
+        MOTHERDUCK_TOKEN: MotherDuck service token (read by DuckDB's
+            MotherDuck extension directly from the environment, not
+            embedded in the connection string — see get_client()).
+        MD_DATABASE: MotherDuck database name (e.g. "raw_dev"). Required
+            in this mode.
+
+    Local file (no MotherDuck account needed) — MOTHERDUCK_TOKEN absent:
+        DUCKDB_PATH: path to a local .duckdb file (created if it doesn't
+            exist yet, including inside a Docker container's mounted
+            volume). Defaults to "./warehouse.duckdb" if unset.
 
     Raises:
-        ConfigError: If a required variable is missing.
+        ConfigError: If MOTHERDUCK_TOKEN is set but MD_DATABASE is missing.
     """
     motherduck_token = os.environ.get("MOTHERDUCK_TOKEN", "").strip()
-    if not motherduck_token:
-        raise ConfigError("MOTHERDUCK_TOKEN environment variable is required")
 
-    md_database = os.environ.get("MD_DATABASE", "").strip()
-    if not md_database:
-        raise ConfigError("MD_DATABASE environment variable is required")
+    if motherduck_token:
+        md_database = os.environ.get("MD_DATABASE", "").strip()
+        if not md_database:
+            raise ConfigError(
+                "MD_DATABASE environment variable is required when MOTHERDUCK_TOKEN is set"
+            )
+        return MotherDuckConfig(connection_string=f"md:{md_database}")
 
-    return MotherDuckConfig(motherduck_token=motherduck_token, md_database=md_database)
+    duckdb_path = os.environ.get("DUCKDB_PATH", "").strip() or "./warehouse.duckdb"
+    return MotherDuckConfig(connection_string=duckdb_path)
 
 
 def get_client(cfg: MotherDuckConfig) -> duckdb.DuckDBPyConnection:
-    """Connect to the configured MotherDuck database.
+    """Connect to the configured DuckDB database — local file or MotherDuck
+    cloud, whichever load_config() resolved.
 
-    The token is not embedded in the connection string: load_config()
-    requires MOTHERDUCK_TOKEN to already be set as a real environment
-    variable, and DuckDB's MotherDuck extension reads motherduck_token from
-    the environment on its own. Keeping it out of the connection string
-    means it never appears in a traceback or log line that captures the
-    connection string.
+    The MotherDuck token itself is never embedded in the connection string:
+    DuckDB's MotherDuck extension reads motherduck_token from the
+    environment on its own, so this function's body is identical for both
+    modes and never sees the token — it never appears in a traceback or
+    log line that captures the connection string.
     """
-    return duckdb.connect(f"md:{cfg.md_database}")
+    return duckdb.connect(cfg.connection_string)
 
 
 def ensure_dataset(client: duckdb.DuckDBPyConnection, cfg: MotherDuckConfig) -> None:

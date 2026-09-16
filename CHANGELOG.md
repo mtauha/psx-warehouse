@@ -11,6 +11,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- `extract/motherduck_io.py` supports a plain local `.duckdb` file (no
+  MotherDuck account needed) as well as MotherDuck cloud — selected purely
+  by whether `MOTHERDUCK_TOKEN` is set. New `DUCKDB_PATH` env var for the
+  local-file mode. `dbt/profiles.example.yml` now has separate `dev`
+  (local file) and `dev_motherduck` (cloud) targets.
+- `scripts/run_local.sh`: local equivalent of the production Cloud Run
+  Job's entrypoint (extract, then `dbt build`), for scheduling a local
+  "daily sync" via cron. Documented in `DEPLOYMENT.md`.
+
 - Terraform-managed GCP production infrastructure: BigQuery raw dataset,
   one service account with project-level BigQuery roles and a
   resource-scoped `run.invoker` binding, a Cloud Run Job, and a Cloud

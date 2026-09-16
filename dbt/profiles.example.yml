@@ -3,13 +3,19 @@
 # fill in real values, and never commit the real file — it's gitignored
 # because it can carry secrets (see .gitignore's "Secrets" section).
 #
-# dev  -> MotherDuck (dbt-duckdb), for local development.
-# prod -> BigQuery (dbt-bigquery), the real production target.
+# dev            -> a local .duckdb file, no MotherDuck account needed.
+# dev_motherduck -> MotherDuck (cloud DuckDB), for shared/cloud local dev.
+# prod           -> BigQuery (dbt-bigquery), the real production target.
 
 psx_warehouse:
   target: dev
   outputs:
     dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', './warehouse.duckdb') }}"
+      threads: 1
+
+    dev_motherduck:
       type: duckdb
       path: "md:{{ env_var('MD_DATABASE') }}?motherduck_token={{ env_var('MOTHERDUCK_TOKEN') }}"
       threads: 1

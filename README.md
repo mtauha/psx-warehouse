@@ -5,6 +5,7 @@
 [![dbt docs](https://github.com/mtauha/psx-warehouse/actions/workflows/dbt-docs.yml/badge.svg)](https://github.com/mtauha/psx-warehouse/actions/workflows/dbt-docs.yml)
 [![Docker Hub](https://img.shields.io/badge/docker-mtauha%2Fpsx--warehouse-blue?logo=docker)](https://hub.docker.com/r/mtauha/psx-warehouse)
 [![License: MIT](https://img.shields.io/github/license/mtauha/psx-warehouse)](LICENSE.md)
+[![dbt docs](https://img.shields.io/badge/dbt%20docs-view-orange)](https://mtauha.github.io/psx-warehouse/)
 
 dbt-core + BigQuery analytics layer on top of the [`psxdata`](https://github.com/mtauha/psxdata) SDK, turning raw PSX OHLCV data into tested, analysis-ready marts.
 

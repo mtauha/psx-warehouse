@@ -1,13 +1,15 @@
 # Deployment Guide
 
-How to run this warehouse — locally against MotherDuck in a few minutes, or
-deployed to your own GCP project.
+How to run this warehouse — purely locally against a DuckDB file, against
+MotherDuck, on a local cron schedule, or deployed to your own GCP project.
 
 ## Contents
 
-- [Architecture](#architecture)
+- [Local development (DuckDB)](#local-development-duckdb)
 - [Local development (MotherDuck)](#local-development-motherduck)
+- [Local cron scheduling](#local-cron-scheduling)
 - [Production deployment (GCP)](#production-deployment-gcp)
+  - [Architecture](#architecture)
   - [Prerequisites](#prerequisites)
   - [GCP bootstrap (one-time, manual)](#gcp-bootstrap-one-time-manual)
   - [Deploying the infrastructure](#deploying-the-infrastructure)
@@ -15,7 +17,96 @@ deployed to your own GCP project.
 - [CI/CD](#cicd)
 - [Known limitation: dbt writes into the raw dataset](#known-limitation-dbt-writes-into-the-raw-dataset)
 
-## Architecture
+## Local development (DuckDB)
+
+The fastest way to run the whole pipeline — no account, no token, just a
+local file.
+
+**Prerequisites:** [uv](https://docs.astral.sh/uv/). Nothing else.
+
+```bash
+uv sync --extra dev --extra dbt
+cp dbt/profiles.example.yml ~/.dbt/profiles.yml
+```
+
+```bash
+uv run python -m extract.main          # writes ./warehouse.duckdb by default
+cd dbt && uv run --project .. dbt build --target dev
+```
+
+Set `DUCKDB_PATH` if you want the file somewhere other than
+`./warehouse.duckdb` (e.g. a path mounted into a Docker container as a
+volume, if you're running extraction inside one). Whatever `DUCKDB_PATH`
+resolves to is passed straight to `duckdb.connect()` — it's just a file path,
+nothing DuckDB-server-specific to configure.
+
+Browse the lineage graph locally:
+
+```bash
+uv run --project .. dbt docs generate --target dev
+uv run --project .. dbt docs serve
+```
+
+## Local development (MotherDuck)
+
+Same pipeline, against MotherDuck's hosted DuckDB instead of a local file —
+useful if you want your local dev data shared across machines or visible in
+MotherDuck's own UI.
+
+**Prerequisites:** [uv](https://docs.astral.sh/uv/), a free
+[MotherDuck](https://motherduck.com/) account and token.
+
+```bash
+uv sync --extra dev --extra dbt
+cp dbt/profiles.example.yml ~/.dbt/profiles.yml
+```
+
+```bash
+MOTHERDUCK_TOKEN=... MD_DATABASE=your_db uv run python -m extract.main
+cd dbt && uv run --project .. dbt build --target dev_motherduck
+```
+
+Setting `MOTHERDUCK_TOKEN` is what switches `extract/motherduck_io.py` from
+local-file mode to MotherDuck mode — see its `load_config()` docstring for
+the exact rule. Never point either local mode at production BigQuery; that's
+what the GCP deployment below is for.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) if you're adding a new backend rather
+than running an existing one.
+
+## Local cron scheduling
+
+`scripts/run_local.sh` runs the same two steps (extract, then `dbt build`)
+as the production Cloud Run Job — it's the local equivalent of what Cloud
+Scheduler triggers. Point it at either local mode above via the same env
+vars.
+
+**Linux/macOS (cron):**
+
+```bash
+crontab -e
+```
+
+```cron
+# Daily at 6 PM. Cron runs with a minimal PATH, so reference uv by its full
+# path (`which uv`) rather than assuming your shell's PATH applies.
+0 18 * * * cd /path/to/psx-warehouse && DUCKDB_PATH=/path/to/psx-warehouse/warehouse.duckdb /usr/local/bin/uv run sh scripts/run_local.sh >> /path/to/psx-warehouse/cron.log 2>&1
+```
+
+Redirect to a log file as shown above and rotate it yourself (`logrotate`,
+or just truncate periodically) — cron doesn't do this for you, and the
+extraction job's own logging has no built-in rotation either.
+
+**Windows (Task Scheduler):** create a Basic Task, trigger daily at your
+chosen time, action "Start a program", program `sh.exe` (from Git Bash or
+WSL), arguments `scripts/run_local.sh`, "Start in" set to the repo root.
+
+## Production deployment (GCP)
+
+### Architecture
+
+This section only applies to the GCP deployment — the local modes above
+have no orchestration at all, just the two commands run by hand or via cron.
 
 ```
 Cloud Scheduler (daily, 6 PM PKT / Asia/Karachi)
@@ -30,48 +121,12 @@ BigQuery (raw dataset; staging/intermediate/marts currently share it too --
           see "Known limitation" below)
 ```
 
-That's the production path. Locally, the same two steps (`extract` then
-`dbt build`) run by hand against MotherDuck instead — no Scheduler, no Cloud
-Run, no orchestration at all.
-
-In production, one service account (`psx-warehouse-runner`) does double
-duty: it's the identity Cloud Scheduler authenticates as to invoke the Job,
-and the identity the Job itself runs as (attached directly, no downloadable
-key — both `extract/bigquery_io.py` and dbt-bigquery's `oauth` auth method
-resolve Application Default Credentials from Cloud Run's metadata server
+One service account (`psx-warehouse-runner`) does double duty: it's the
+identity Cloud Scheduler authenticates as to invoke the Job, and the identity
+the Job itself runs as (attached directly, no downloadable key — both
+`extract/bigquery_io.py` and dbt-bigquery's `oauth` auth method resolve
+Application Default Credentials from Cloud Run's metadata server
 automatically).
-
-## Local development (MotherDuck)
-
-The fastest way to run the whole pipeline end to end.
-
-**Prerequisites:** [uv](https://docs.astral.sh/uv/), a free
-[MotherDuck](https://motherduck.com/) account and token.
-
-```bash
-uv sync --extra dev --extra dbt
-cp dbt/profiles.example.yml ~/.dbt/profiles.yml   # fill in your own MD_DATABASE
-```
-
-Run extraction against MotherDuck (never against production BigQuery from a
-laptop — that's what the GCP deployment below is for):
-
-```bash
-BACKEND=motherduck MD_DATABASE=your_db MOTHERDUCK_TOKEN=... python -m extract.main
-cd dbt && dbt build --target dev
-```
-
-Browse the lineage graph locally:
-
-```bash
-dbt docs generate --target dev
-dbt docs serve
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) if you're adding a new backend rather
-than running an existing one.
-
-## Production deployment (GCP)
 
 ### Prerequisites
 

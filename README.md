@@ -19,12 +19,12 @@ to query.
 
 ```bash
 uv sync --extra dev --extra dbt
-BACKEND=motherduck MD_DATABASE=your_db MOTHERDUCK_TOKEN=... python -m extract.main
-cd dbt && dbt build --target dev
+uv run python -m extract.main          # writes ./warehouse.duckdb, no account needed
+cd dbt && uv run --project .. dbt build --target dev
 ```
 
-Full walkthrough (local MotherDuck setup, or deploying your own copy to GCP):
-[DEPLOYMENT.md](DEPLOYMENT.md).
+Full walkthrough (local DuckDB/MotherDuck setup, scheduling a local cron
+sync, or deploying your own copy to GCP): [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Layout
 

@@ -35,24 +35,18 @@ from extract.motherduck_io import (
 
 
 def _cfg() -> MotherDuckConfig:
-    return MotherDuckConfig(motherduck_token="unused", md_database="unused")
+    return MotherDuckConfig(connection_string="unused")
 
 
-def test_load_config_reads_required_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_config_reads_motherduck_vars_when_token_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MOTHERDUCK_TOKEN", "tok123")
     monkeypatch.setenv("MD_DATABASE", "raw_dev")
 
     cfg = load_config()
 
-    assert cfg == MotherDuckConfig(motherduck_token="tok123", md_database="raw_dev")
-
-
-def test_load_config_raises_when_token_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MOTHERDUCK_TOKEN", raising=False)
-    monkeypatch.setenv("MD_DATABASE", "raw_dev")
-
-    with pytest.raises(ConfigError, match="MOTHERDUCK_TOKEN"):
-        load_config()
+    assert cfg == MotherDuckConfig(connection_string="md:raw_dev")
 
 
 def test_load_config_raises_when_database_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,6 +57,28 @@ def test_load_config_raises_when_database_missing(monkeypatch: pytest.MonkeyPatc
         load_config()
 
 
+def test_load_config_uses_local_file_when_token_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MOTHERDUCK_TOKEN", raising=False)
+    monkeypatch.setenv("DUCKDB_PATH", "/data/warehouse.duckdb")
+
+    cfg = load_config()
+
+    assert cfg == MotherDuckConfig(connection_string="/data/warehouse.duckdb")
+
+
+def test_load_config_local_file_defaults_when_path_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MOTHERDUCK_TOKEN", raising=False)
+    monkeypatch.delenv("DUCKDB_PATH", raising=False)
+
+    cfg = load_config()
+
+    assert cfg == MotherDuckConfig(connection_string="./warehouse.duckdb")
+
+
 @patch("extract.motherduck_io.duckdb")
 def test_get_client_builds_md_connection_string(mock_duckdb: MagicMock) -> None:
     """The token must not appear in the connection string — DuckDB's
@@ -70,11 +86,20 @@ def test_get_client_builds_md_connection_string(mock_duckdb: MagicMock) -> None:
     own, and load_config() already requires MOTHERDUCK_TOKEN to be set
     there. Keeping it out of the connection string means it never shows up
     in a traceback or log line that captures the string."""
-    cfg = MotherDuckConfig(motherduck_token="tok123", md_database="raw_dev")
+    cfg = MotherDuckConfig(connection_string="md:raw_dev")
 
     get_client(cfg)
 
     mock_duckdb.connect.assert_called_once_with("md:raw_dev")
+
+
+@patch("extract.motherduck_io.duckdb")
+def test_get_client_connects_to_local_path(mock_duckdb: MagicMock) -> None:
+    cfg = MotherDuckConfig(connection_string="/data/warehouse.duckdb")
+
+    get_client(cfg)
+
+    mock_duckdb.connect.assert_called_once_with("/data/warehouse.duckdb")
 
 
 def test_ensure_dataset_creates_both_tables(tmp_path: Path) -> None:

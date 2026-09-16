@@ -29,6 +29,11 @@ resource "google_cloud_run_v2_job" "extract" {
           name  = "BQ_DATASET"
           value = var.bq_dataset
         }
+
+        env {
+          name  = "RAW_BQ_DATASET"
+          value = var.bq_dataset
+        }
       }
     }
   }

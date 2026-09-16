@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 python -m extract.main
 

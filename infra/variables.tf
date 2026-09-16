@@ -24,7 +24,7 @@ variable "bq_location" {
 variable "docker_image" {
   description = "Public Docker Hub image the Cloud Run Job pulls."
   type        = string
-  default     = "mtauha/psx-warehouse:latest"
+  default     = "docker.io/mtauha/psx-warehouse:latest"
 }
 
 variable "schedule_cron" {

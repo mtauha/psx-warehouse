@@ -4,6 +4,8 @@ locals {
     "cloudscheduler.googleapis.com",
     "bigquery.googleapis.com",
     "iam.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "serviceusage.googleapis.com",
   ]
 }
 

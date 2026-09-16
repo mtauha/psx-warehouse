@@ -25,7 +25,8 @@ are built and tested against MotherDuck; Terraform-managed GCP infrastructure
 - `infra/` — Terraform: one service account (`psx-warehouse-runner`) with
   project-level BigQuery `dataEditor`/`jobUser` roles plus a resource-scoped
   `run.invoker` binding, a BigQuery `raw` dataset, a Cloud Run Job pulling
-  the published Docker image, and a Cloud Scheduler job triggering it daily
-  at 6 PM PKT (`Asia/Karachi`).
+  the Docker Hub image published by `docker-publish.yml` (merges once PR #23
+  lands), and a Cloud Scheduler job triggering it daily at 6 PM PKT
+  (`Asia/Karachi`).
 
 <!-- CI verification: phase 1 scaffolding -->

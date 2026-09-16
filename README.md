@@ -23,4 +23,13 @@ not yet live.
     `fact_index_membership`, `fact_sector_daily`, `fact_valuation_daily`)
 - `infra/` — Terraform
 
+## CI/CD
+
+- `ci.yml` — lint, test, and `dbt parse` validation on every push/PR to `main`.
+- `docker-publish.yml` — builds and pushes `mtauha/psx-warehouse:latest` (and a
+  short-sha tag) to Docker Hub on every push to `main`.
+- `dbt-docs.yml` — publishes dbt docs to GitHub Pages on every `dbt/` change:
+  https://mtauha.github.io/psx-warehouse/ (generated against the MotherDuck dev
+  target until BigQuery/Terraform is live).
+
 <!-- CI verification: phase 1 scaffolding -->

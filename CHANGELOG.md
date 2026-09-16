@@ -11,6 +11,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Terraform-managed GCP production infrastructure: BigQuery raw dataset,
+  one service account with project-level BigQuery roles and a
+  resource-scoped `run.invoker` binding, a Cloud Run Job, and a Cloud
+  Scheduler job triggering it daily.
 - Repository scaffolding: Python/dbt project structure, CI (lint + dbt
   parse), GitHub issue/PR templates, dependabot, branch protection on `main`.
 - Raw-layer extraction for three new tables, on both BigQuery and
@@ -49,3 +53,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   script (`dbt/seeds/prepare_seed_index_price_history.py`) normalizes a
   raw investing.com-style export into the seed CSV; `dbt seed` then loads it
   identically on any target, including BigQuery once it's live.
+
+### Fixed
+
+- Docker image now actually installs dbt-core/dbt-bigquery and bakes in
+  `dbt_utils` at build time; previously the image could only run extraction,
+  never dbt.

@@ -5,8 +5,9 @@ dbt-core + BigQuery analytics layer on top of the [`psxdata`](https://github.com
 A personal analytics warehouse on PSX/KSE-100 stocks.
 
 **Status:** under construction. Raw-layer extraction and the dbt marts layer
-are built and tested against MotherDuck; BigQuery/Terraform infrastructure is
-not yet live.
+are built and tested against MotherDuck; Terraform-managed GCP infrastructure
+(BigQuery raw dataset, Cloud Run Job, Cloud Scheduler) is written and
+`terraform validate`-clean, pending the GCP billing account before `apply`.
 
 ## Layout
 
@@ -21,6 +22,10 @@ not yet live.
   - `models/marts/` — three Type-1 dimensions (`dim_sectors`, `dim_indices`,
     `dim_date`) and five fact tables (`fact_ohlcv`, `fact_restatement_history`,
     `fact_index_membership`, `fact_sector_daily`, `fact_valuation_daily`)
-- `infra/` — Terraform
+- `infra/` — Terraform: one service account (`psx-warehouse-runner`) with
+  project-level BigQuery `dataEditor`/`jobUser` roles plus a resource-scoped
+  `run.invoker` binding, a BigQuery `raw` dataset, a Cloud Run Job pulling
+  the published Docker image, and a Cloud Scheduler job triggering it daily
+  at 6 PM PKT (`Asia/Karachi`).
 
 <!-- CI verification: phase 1 scaffolding -->

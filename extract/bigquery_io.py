@@ -418,6 +418,19 @@ def load_sectors_rows(
     job.result()
 
 
+def _clean_screener_sector(value: object) -> str | None:
+    """psxdata.screener()'s sector column is a numeric PSX sector code
+    coerced to float64 by the SDK, but SCREENER_SCHEMA stores it as STRING
+    to join against raw.sectors.sector_code -- convert without leaving a
+    stray trailing '.0' on what's really an identifier, not a number.
+    """
+    if pd.isna(value):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
 def load_screener_rows(
     client: bigquery.Client,
     cfg: BigQueryConfig,
@@ -443,6 +456,7 @@ def load_screener_rows(
     for optional_col in optional_cols:
         if optional_col not in payload.columns:
             payload[optional_col] = pd.NA
+    payload["sector"] = payload["sector"].apply(_clean_screener_sector)
     payload = payload[[field.name for field in SCREENER_SCHEMA]]
 
     job_config = bigquery.LoadJobConfig(

@@ -333,6 +333,27 @@ def test_load_screener_rows_loads_with_snapshot_date() -> None:
     assert payload["snapshot_date"].iloc[0] == date(2026, 9, 2)
 
 
+def test_load_screener_rows_coerces_float_sector_code_to_clean_string() -> None:
+    """Regression test: psxdata.screener() returns sector as float64 (SDK
+    coerces the raw numeric PSX sector code via coerce_numeric), but
+    SCREENER_SCHEMA declares sector STRING -- previously caused a real
+    production pyarrow.ArrowTypeError on client.load_table_from_dataframe.
+    """
+    client = MagicMock()
+    df = pd.DataFrame([
+        {"symbol": "ENGRO", "sector": 14.0},
+        {"symbol": "LUCK", "sector": float("nan")},
+    ])
+
+    load_screener_rows(client, _cfg(), df, date(2026, 9, 2))
+
+    client.load_table_from_dataframe.assert_called_once()
+    payload = client.load_table_from_dataframe.call_args[0][0]
+    assert payload["sector"].iloc[0] == "14"
+    assert payload["sector"].dtype == object
+    assert pd.isna(payload["sector"].iloc[1])
+
+
 def test_load_screener_rows_fills_missing_optional_columns() -> None:
     client = MagicMock()
     df = pd.DataFrame([{"symbol": "ENGRO"}])

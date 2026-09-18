@@ -43,6 +43,13 @@ resource "google_cloud_run_v2_job" "extract" {
     google_project_iam_member.runner_bigquery_data_editor,
     google_project_iam_member.runner_bigquery_job_user,
   ]
+
+  lifecycle {
+    # image is deployed by CI after the first apply (see .github/workflows/docker-publish.yml's
+    # `deploy` job) -- Terraform only sets it at creation. var.docker_image is otherwise unused
+    # after that; do not expect `terraform apply` to change this field again.
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
 }
 
 resource "google_cloud_run_v2_job_iam_member" "scheduler_invokes" {

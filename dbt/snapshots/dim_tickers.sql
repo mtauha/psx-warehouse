@@ -2,7 +2,7 @@
 
 {{
     config(
-        target_schema=target.schema,
+        target_schema='marts',
         unique_key='symbol',
         strategy='check',
         check_cols=['name', 'sector_code', 'is_etf', 'is_debt', 'is_gem', 'is_margin_eligible'],

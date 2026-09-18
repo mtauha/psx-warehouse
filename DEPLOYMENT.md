@@ -110,9 +110,11 @@ have no orchestration at all, just the two commands run by hand or via cron.
 
 ```
 Cloud Scheduler (daily, 6 PM PKT / Asia/Karachi)
-        |  triggers via OAuth, as the one service account below
+        |  triggers via OAuth, as the runner service account below
         v
-Cloud Run Job (pulls mtauha/psx-warehouse:latest from Docker Hub)
+Cloud Run Job (runs the exact image digest CI last deployed -- see "CI/CD"
+               below; :latest is still published to Docker Hub but the Job
+               never pulls it directly)
   1. python -m extract.main        -- scrape PSX, write raw.* tables
   2. dbt build --target prod       -- seed + staging + intermediate + marts
         |
@@ -121,12 +123,26 @@ BigQuery (raw dataset; staging/intermediate/marts currently share it too --
           see "Known limitation" below)
 ```
 
-One service account (`psx-warehouse-runner`) does double duty: it's the
-identity Cloud Scheduler authenticates as to invoke the Job, and the identity
-the Job itself runs as (attached directly, no downloadable key — both
-`extract/bigquery_io.py` and dbt-bigquery's `oauth` auth method resolve
-Application Default Credentials from Cloud Run's metadata server
-automatically).
+Two service accounts split this by function, kept separate on purpose:
+
+- `psx-warehouse-runner` — the Job's own runtime identity. Cloud Scheduler
+  authenticates as it to invoke the Job, and the Job itself runs as it
+  (attached directly, no downloadable key — both `extract/bigquery_io.py`
+  and dbt-bigquery's `oauth` auth method resolve Application Default
+  Credentials from Cloud Run's metadata server automatically). It can read
+  and write BigQuery and execute the Job, but has no permission to change
+  the Job's own spec.
+- `psx-warehouse-deployer` — used only by GitHub Actions CI, via Workload
+  Identity Federation (no downloadable key, no long-lived secret), to update
+  the Job's image to the digest just built. It holds a custom IAM role
+  limited to `run.jobs.get`/`run.jobs.update` (plus `iam.serviceAccountUser`
+  scoped narrowly to the runner service account, which `gcloud run jobs
+  update` requires) — it cannot execute the Job or touch BigQuery.
+
+They're kept separate for least privilege: the CI credential shouldn't be
+able to do anything the Job's own runtime identity can do (run the Job,
+read/write BigQuery), and vice versa (the runtime identity can't redeploy
+the Job).
 
 ### Prerequisites
 
@@ -140,6 +156,13 @@ automatically).
 - Three GitHub repo secrets, if you fork this: `DOCKERHUB_USERNAME`,
   `DOCKERHUB_TOKEN` (for `docker-publish.yml`), `MOTHERDUCK_TOKEN` (for
   `dbt-docs.yml`).
+- Three GitHub repo **variables** too (not secrets — none of these are
+  sensitive), for `docker-publish.yml`'s `deploy` job: `GCP_PROJECT` (your
+  GCP project ID), plus `GCP_WORKLOAD_IDENTITY_PROVIDER` and
+  `GCP_DEPLOYER_SA_EMAIL`, both read from Terraform outputs after you apply
+  (see "Deploying the infrastructure" below). Skip these and the `deploy`
+  job fails on every push to `main` — harmlessly, since the image still
+  publishes and only the Job redeploy is skipped.
 
 ### GCP bootstrap (one-time, manual)
 
@@ -230,6 +253,19 @@ orphaning real cloud resources it no longer tracks. Leave
 exact provider version for reproducibility; deleting it lets `init` resolve
 a potentially different one.
 
+**If you forked this repo**, set the GitHub repo variables now, using the
+two new Terraform outputs:
+
+```bash
+terraform output workload_identity_provider
+terraform output deployer_service_account_email
+```
+
+Set these as `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOYER_SA_EMAIL`,
+plus `GCP_PROJECT` (the same project ID from `terraform.tfvars`), as GitHub
+repo variables (Settings -> Secrets and variables -> Actions -> Variables
+tab) — see "Prerequisites" above for why.
+
 ### Verifying a deployment
 
 ```bash
@@ -244,7 +280,9 @@ take over unsupervised.
 
 - `ci.yml` — lint, test, `dbt parse` on every push/PR to `main`.
 - `docker-publish.yml` — builds and pushes `mtauha/psx-warehouse:latest`
-  (+ a short-sha tag) to Docker Hub on every push to `main`.
+  (+ a short-sha tag) to Docker Hub, then redeploys the Cloud Run Job to
+  that exact image digest via Workload Identity Federation, on every push
+  to `main`.
 - `dbt-docs.yml` — publishes dbt docs to GitHub Pages
   (https://mtauha.github.io/psx-warehouse/) on every `dbt/` change.
 

@@ -54,7 +54,9 @@ sync, or deploying your own copy to GCP): [DEPLOYMENT.md](DEPLOYMENT.md).
 
 - `ci.yml` — lint, test, and `dbt parse` on every push/PR to `main`.
 - `docker-publish.yml` — builds and pushes `mtauha/psx-warehouse:latest`
-  (+ a short-sha tag) to Docker Hub on every push to `main`.
+  (+ a short-sha tag) to Docker Hub, then redeploys the Cloud Run Job to
+  that exact image digest via Workload Identity Federation, on every push
+  to `main`.
 - `dbt-docs.yml` — publishes the dbt lineage docs to
   [GitHub Pages](https://mtauha.github.io/psx-warehouse/) on every `dbt/`
   change.

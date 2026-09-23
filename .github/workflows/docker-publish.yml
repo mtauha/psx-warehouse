@@ -28,7 +28,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -49,11 +49,11 @@ jobs:
       contents: read
     steps:
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA_EMAIL }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - name: Update Cloud Run Job to the just-built digest
         run: |
           gcloud run jobs update psx-warehouse-extract \

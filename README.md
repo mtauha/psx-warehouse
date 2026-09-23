@@ -19,7 +19,7 @@ to query.
 
 ```bash
 uv sync --extra dev --extra dbt
-uv run python -m extract.main          # writes ./warehouse.duckdb, no account needed
+BACKEND=motherduck uv run python -m extract.main   # writes ./warehouse.duckdb, no account needed
 cd dbt && uv run --project .. dbt build --target dev
 ```
 

@@ -2,7 +2,7 @@
     config(
         materialized='incremental',
         unique_key=['ticker_key', 'date'],
-        incremental_strategy='delete+insert',
+        incremental_strategy='merge',
         on_schema_change='sync_all_columns'
     )
 }}

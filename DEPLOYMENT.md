@@ -30,7 +30,7 @@ cp dbt/profiles.example.yml ~/.dbt/profiles.yml
 ```
 
 ```bash
-uv run python -m extract.main          # writes ./warehouse.duckdb by default
+BACKEND=motherduck uv run python -m extract.main   # writes ./warehouse.duckdb by default
 cd dbt && uv run --project .. dbt build --target dev
 ```
 

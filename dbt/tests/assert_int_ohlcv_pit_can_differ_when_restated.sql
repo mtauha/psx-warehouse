@@ -8,6 +8,7 @@
 -- current dataset has no multi-restated rows yet, same posture as this
 -- project's existing assert_market_cap_matches_index_membership precedent.
 select 1 as no_differing_restated_row_found
+from (select 1) as one_row
 where (select count(*) from {{ ref('fact_restatement_history') }} where restatement_count > 1) > 0
   and not exists (
       select 1

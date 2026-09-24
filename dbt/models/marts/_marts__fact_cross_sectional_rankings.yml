@@ -16,21 +16,25 @@ models:
         tests:
           - accepted_values:
               values: [1, 2, 3, 4, 5]
+              quote: false
               config: {where: "momentum_63d_quintile is not null"}
       - name: relative_strength_63d_quintile
         tests:
           - accepted_values:
               values: [1, 2, 3, 4, 5]
+              quote: false
               config: {where: "relative_strength_63d_quintile is not null"}
       - name: pe_ratio_quintile
         tests:
           - accepted_values:
               values: [1, 2, 3, 4, 5]
+              quote: false
               config: {where: "pe_ratio_quintile is not null"}
       - name: low_vol_quintile
         tests:
           - accepted_values:
               values: [1, 2, 3, 4, 5]
+              quote: false
               config: {where: "low_vol_quintile is not null"}
     tests:
       - dbt_utils.unique_combination_of_columns:

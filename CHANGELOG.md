@@ -65,6 +65,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Require `psxdata>=1.1.1` (lockfile bumped from 1.1.0). PSX now rejects data
+  requests that lack its per-page request token, so every extraction run on
+  1.1.0 got HTTP 403 and failed with zero OHLCV rows; 1.1.1 sends the token.
 - Docker image now actually installs dbt-core/dbt-bigquery and bakes in
   `dbt_utils` at build time; previously the image could only run extraction,
   never dbt.

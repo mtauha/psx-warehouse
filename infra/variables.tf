@@ -28,9 +28,9 @@ variable "docker_image" {
 }
 
 variable "schedule_cron" {
-  description = "Cron expression for the daily extraction run."
+  description = "Cron expression for the extraction run, weekdays (Mon-Fri) only -- PSX doesn't trade on weekends."
   type        = string
-  default     = "0 18 * * *"
+  default     = "0 18 * * 1-5"
 }
 
 variable "schedule_timezone" {

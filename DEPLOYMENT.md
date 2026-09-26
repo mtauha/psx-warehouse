@@ -109,7 +109,7 @@ This section only applies to the GCP deployment — the local modes above
 have no orchestration at all, just the two commands run by hand or via cron.
 
 ```
-Cloud Scheduler (daily, 6 PM PKT / Asia/Karachi)
+Cloud Scheduler (weekdays Mon-Fri, 6 PM PKT / Asia/Karachi)
         |  triggers via OAuth, as the runner service account below
         v
 Cloud Run Job (runs the exact image digest CI last deployed -- see "CI/CD"
@@ -273,7 +273,7 @@ gcloud run jobs execute psx-warehouse-extract --region us-central1
 ```
 
 Watch the execution in Cloud Run's own console/logs. Confirm rows land in
-`raw.*` and the dbt layers build, then let Cloud Scheduler's daily cadence
+`raw.*` and the dbt layers build, then let Cloud Scheduler's weekday cadence
 take over unsupervised.
 
 ## CI/CD

@@ -63,6 +63,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   raw investing.com-style export into the seed CSV; `dbt seed` then loads it
   identically on any target, including BigQuery once it's live.
 
+### Changed
+
+- Extraction now runs weekdays only (Mon-Fri) instead of daily. PSX doesn't
+  trade on weekends, so a Saturday/Sunday run only ever re-fetched an
+  unchanged Friday close. `schedule_cron` default is now `0 18 * * 1-5`.
+
 ### Fixed
 
 - Require `psxdata>=1.1.1` (lockfile bumped from 1.1.0). PSX now rejects data
